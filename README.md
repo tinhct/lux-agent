@@ -153,13 +153,6 @@ Before running the agent, make sure you have:
 
 ---
 
-## **Project Management**
-
-* **Adding Pipelines**: Extend your targets with `agents-cli scaffold enhance`.
-* **Infrastructure Provisioning**: Run setup operations via `agents-cli infra single-project` or `agents-cli infra cicd` for deployment pipelines.
-
----
-
 ## **Development**
 
 * Code edits are performed in `app/agent.py` and tools should be added as MCP server definitions under `mcp_server/server.py`.
