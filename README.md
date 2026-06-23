@@ -98,18 +98,33 @@ graph TD
 lux-agent/
 ├── .agents/                   # Workspace customizations and skills
 │   └── skills/
-│       └── query_dma_rag/     # Local skill directory
-│           ├── SKILL.md       # Skill definition and examples
-│           └── references/    # RAG guidelines reference
-├── app/                       # Core agent implementation
-│   ├── agent.py               # Main agent nodes and graph configuration
-│   ├── agent_runtime_app.py   # Agent Runtime interface
-│   └── app_utils/             # Shared helpers (logging, typing)
+│       ├── fetch_amazon_brands/ # Skill for auditing Amazon private labels
+│       │   └── SKILL.md       # Skill definition for Amazon API extraction
+│       └── query_dma_rag/     # Skill for querying DMA gatekeeper rules
+│           ├── SKILL.md       # Skill definition and semantic search parameters
+│           └── references/    # RAG citation guidelines & edge-case rules
+├── app/                       # Core agent engine nodes & graph
+│   ├── agent.py               # Main workflow definition, LLM agents, and nodes
+│   ├── agent_runtime_app.py   # ADK Reasoning Engine setup wrapper
+│   └── app_utils/             # Shared helpers, telemetry, and custom types
+├── artifacts/                 # Evaluator logs and telemetry traces
+│   ├── traces/                # Raw traces from agents evaluation
+│   └── grade_results/         # Graded evaluation metrics and dashboards
+├── deployment/                # IaC scripts for cloud deployment
+│   └── terraform/             # Terraform configuration files (single project, CI/CD)
+├── frontend/                  # Web dashboard (Researcher Portal)
+│   ├── main.py                # FastAPI portal dashboard
+│   ├── Dockerfile             # Container configuration for portal deployment
+│   └── README.md              # Dashboard launch manual
 ├── mcp_server/                # Local Model Context Protocol server
-│   ├── server.py              # Sandbox tool implementations (Amazon API, RAG search)
-│   └── pyproject.toml         # MCP sandbox dependencies
-├── tests/                     # Test harness (unit and integration tests)
-├── GEMINI.md                  # Developer guidelines and commands
+│   ├── server.py              # Sandbox tool endpoints (Amazon suggestions, Vector Search RAG)
+│   └── pyproject.toml         # Sandbox dependencies
+├── tests/                     # Test harness (unit, integration, and mocks)
+│   ├── conftest.py            # Global test fixtures (RAG client mocks)
+│   ├── unit/                  # Unit tests
+│   └── integration/           # Integration tests (Reasoning Engine stream tests)
+├── GEMINI.md                  # Development flywheel guide
+├── agents-cli-manifest.yaml   # ADK workspace configuration manifest
 └── pyproject.toml             # Project dependency configuration
 ```
 
