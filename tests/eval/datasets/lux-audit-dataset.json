@@ -1,0 +1,25 @@
+{
+  "eval_cases": [
+    {
+      "eval_case_id": "mock_payload_parsing",
+      "prompt": {
+        "role": "user",
+        "parts": [{"text": "mock_payload"}]
+      }
+    },
+    {
+      "eval_case_id": "dma_citation",
+      "prompt": {
+        "role": "user",
+        "parts": [{"text": "batteries"}]
+      }
+    },
+    {
+      "eval_case_id": "hitl_interception",
+      "prompt": {
+        "role": "user",
+        "parts": [{"text": "cookies"}]
+      }
+    }
+  ]
+}

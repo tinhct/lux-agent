@@ -1,0 +1,10 @@
+[project]
+name = "lux-mcp-server"
+version = "0.1.0"
+description = "Secure execution sandbox MCP server for Lux Agent"
+dependencies = [
+    "mcp>=1.28.0",
+    "requests>=2.31.0",
+    "google-cloud-discoveryengine>=0.11.0",
+]
+requires-python = ">=3.11"

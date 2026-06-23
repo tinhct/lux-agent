@@ -1,0 +1,76 @@
+metrics_to_run:
+  - assert_mock_payload_parsed
+  - assert_dma_cites
+  - assert_hitl_halt
+
+custom_metrics:
+  - name: assert_mock_payload_parsed
+    custom_function: |
+      def evaluate(instance):
+          case_id = instance.get("eval_case_id", "")
+          agent_data = instance.get("agent_data") or {}
+          turns = agent_data.get("turns", [])
+          
+          has_raw_results = False
+          found_mock_items = False
+          for turn in turns:
+              for event in turn.get("events", []):
+                  parts = (event.get("content") or {}).get("parts") or []
+                  for part in parts:
+                      text = str(part.get("text", "")).lower()
+                      if "amazon basics batteries" in text and "energizer aa batteries" in text:
+                          found_mock_items = True
+                      
+                      func_resp = part.get("function_response") or {}
+                      resp_str = str(func_resp.get("response", "")).lower()
+                      if "amazon basics batteries" in resp_str and "energizer aa batteries" in resp_str:
+                          found_mock_items = True
+                          
+                      if "raw_results" in text or "brand_type" in text:
+                          has_raw_results = True
+          
+          if case_id == "mock_payload_parsing":
+              if found_mock_items:
+                  return {'score': 1.0, 'explanation': 'Successfully parsed the mock Amazon JSON payload.'}
+              return {'score': 0.0, 'explanation': 'Failed to find the mock items in the parsed output.'}
+          else:
+              if has_raw_results or found_mock_items:
+                  return {'score': 1.0, 'explanation': 'Successfully parsed suggestions payload.'}
+              return {'score': 0.0, 'explanation': 'No parsed suggestions found in trace.'}
+
+  - name: assert_dma_cites
+    custom_function: |
+      def evaluate(instance):
+          agent_data = instance.get("agent_data") or {}
+          turns = agent_data.get("turns", [])
+          cites_dma = False
+          for turn in turns:
+              for event in turn.get("events", []):
+                  parts = (event.get("content") or {}).get("parts") or []
+                  for part in parts:
+                      text = str(part.get("text", "")).lower()
+                      if "dma" in text or "digital markets act" in text or "article" in text:
+                          cites_dma = True
+          if cites_dma:
+              return {'score': 1.0, 'explanation': 'The agent cited the DMA in its output.'}
+          return {'score': 0.0, 'explanation': 'The agent failed to cite the DMA in its output.'}
+
+  - name: assert_hitl_halt
+    custom_function: |
+      def evaluate(instance):
+          agent_data = instance.get("agent_data") or {}
+          turns = agent_data.get("turns", [])
+          halted_at_hitl = False
+          for turn in turns:
+              for event in turn.get("events", []):
+                  parts = (event.get("content") or {}).get("parts") or []
+                  for part in parts:
+                      fc = part.get("function_call") or {}
+                      if fc.get("name") == "request_input" or fc.get("id") == "decision":
+                          halted_at_hitl = True
+                      text = str(part.get("text", "")).lower()
+                      if "dma audit report ready for review" in text or "approve, reject, or annotate" in text:
+                          halted_at_hitl = True
+          if halted_at_hitl:
+              return {'score': 1.0, 'explanation': 'Workflow successfully halted at the HITL node.'}
+          return {'score': 0.0, 'explanation': 'Workflow did not halt at the HITL node.'}
