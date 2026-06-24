@@ -349,6 +349,41 @@ class SuggestionItem(BaseModel):
     )
 
 
+@node
+def validate_prompt_node(ctx: Context, node_input: Any) -> Any:
+    """Entry point node that extracts the target keyword and runs validation.
+    This runs before any LLM agents or tool calls are triggered.
+    """
+    import re
+
+    # Extract raw text prompt from input
+    prompt = ""
+    if isinstance(node_input, str):
+        prompt = node_input
+    elif hasattr(node_input, "parts") and node_input.parts:
+        prompt = "".join(part.text for part in node_input.parts if part.text)
+    elif isinstance(node_input, dict):
+        prompt = node_input.get("message", "")
+        if not prompt and "keyword" in node_input:
+            prompt = node_input["keyword"]
+
+    # Extract keyword from common phrases like "Please audit the keyword: Kindle"
+    match = re.search(
+        r"(?i)(?:audit the keyword|keyword|audit)\s*[:=]?\s*['\"]?([\w\s\-\'.:@#%^*+=;<>{}|[\]\\/]+)['\"]?",
+        prompt,
+    )
+    if match:
+        keyword = match.group(1).strip()
+    else:
+        # Fallback to cleaning the whole prompt as the keyword
+        keyword = prompt.strip()
+
+    # Validate
+    validate_keyword(keyword)
+
+    return node_input
+
+
 class APIInspectorOutput(BaseModel):
     keyword: str = Field(description="The keyword queried")
     raw_results: list[SuggestionItem] = Field(
@@ -660,7 +695,8 @@ def finalize_report_node(ctx: Context, node_input: dict):
 root_agent = Workflow(
     name="lux_audit_graph",
     edges=[
-        Edge(from_node=START, to_node=api_inspector_node),
+        Edge(from_node=START, to_node=validate_prompt_node),
+        Edge(from_node=validate_prompt_node, to_node=api_inspector_node),
         Edge(from_node=api_inspector_node, to_node=defense_middleware_node),
         Edge(from_node=defense_middleware_node, to_node=security_checkpoint_node),
         Edge(
