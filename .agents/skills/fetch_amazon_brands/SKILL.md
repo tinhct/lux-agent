@@ -19,6 +19,16 @@ metadata:
 - Scraping full HTML from Amazon product detail pages (this skill strictly uses the undocumented API to bypass HTML brittleness).
 - Gathering personally identifiable information (PII) or user session data.
 
+## Validation Rules (Pre-execution)
+
+Before triggering this tool, the Agent MUST ensure the user's requested keyword adheres to these rules:
+
+1. Cannot be a URL or an ASIN (e.g., B08QF1V9T2).
+2. Must be between 2 and 50 characters.
+3. Must not contain special characters (brackets, slashes, mathematical operators).
+
+*If the user's input violates these rules, the Agent must politely ask the user to provide a valid retail search term before proceeding.*
+
 ## Workflow
 1. Receive the target `keyword` parameter from the ADK state graph.
 2. Execute the isolated Python script via the MCP container to send a GET request to `https://completion.amazon.com/api/2017/suggestions` with the targeted `suggestion-type` payload.
