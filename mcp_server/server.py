@@ -1,10 +1,84 @@
 import json
+from typing import Any
 
 import requests
 from mcp.server.fastmcp import FastMCP
 
 # Initialize FastMCP server
 mcp = FastMCP("lux_audit_sandbox")
+
+
+def validate_keyword(keyword: Any) -> str:
+    """Validates and sanitizes a keyword input for fetch_amazon_brands.
+    Raises ValueError with a clear user-facing explanation if validation fails.
+    Returns the cleaned (trimmed and normalized) keyword string.
+    """
+    import re
+
+    if not isinstance(keyword, str):
+        raise ValueError("Keyword must be a string.")
+
+    # Whitespace Trimming & Normalization
+    cleaned = keyword.strip()
+    cleaned = re.sub(r"\s+", " ", cleaned)
+
+    if not cleaned:
+        raise ValueError("Keyword cannot be empty.")
+
+    # Length Boundaries
+    if len(cleaned) < 2:
+        raise ValueError("Keyword is too short (minimum length is 2 characters).")
+    if len(cleaned) > 50:
+        raise ValueError("Keyword is too long (maximum length is 50 characters).")
+
+    # Security: Character Allowlist
+    if not re.match(r"^[\w\s\-\']+$", cleaned):
+        raise ValueError("Keyword contains invalid characters. Only alphanumeric, spaces, hyphens, and apostrophes are allowed.")
+
+    # Security: Illegal Character Rejection
+    illegal_chars = ["<", ">", "{", "}", "[", "]", "\\", "/", ";", "=", "*"]
+    for char in illegal_chars:
+        if char in cleaned:
+            raise ValueError(f"Keyword contains illegal character: '{char}'")
+
+    # Security: Anti-Prompt Injection Signatures
+    injection_patterns = ["ignore", "instructions", "system prompt", "bypass", "print"]
+    cleaned_lower = cleaned.lower()
+    for pattern in injection_patterns:
+        if pattern in cleaned_lower:
+            raise ValueError(f"Keyword contains blocked word signature: '{pattern}'")
+
+    # Domain: ASIN Rejection (10-character alphanumeric starting with B0)
+    if re.match(r"(?i)^B0[A-Z0-9]{8}$", cleaned):
+        raise ValueError("ASINs (Amazon Standard Identification Numbers) are not allowed as search keywords.")
+
+    # Domain: URL Rejection (containing http, www, or .com)
+    url_patterns = ["http", "www", ".com"]
+    for pattern in url_patterns:
+        if pattern in cleaned_lower:
+            raise ValueError("URLs/links are not allowed as search keywords.")
+
+    # Ethical: PII Block (email, phone, SSN)
+    email_regex = r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}"
+    phone_regex = r"\+?\d[\d\-\s\(\)]{8,}\d"
+    ssn_regex = r"\d{3}-\d{2}-\d{4}"
+
+    if re.search(email_regex, cleaned):
+        raise ValueError("Input contains a pattern formatted like an email address (blocked for PII protection).")
+    if re.search(ssn_regex, cleaned):
+        raise ValueError("Input contains a pattern formatted like a Social Security Number (blocked for PII protection).")
+    if re.search(phone_regex, cleaned):
+        raise ValueError("Input contains a pattern formatted like a phone number (blocked for PII protection).")
+
+    # Ethical: NSFW / Harmful Content Filter (Basic blocklist)
+    harmful_terms = [
+        "porn", "nsfw", "xxx", "sex", "drugs", "weapons", "bomb", "kill", "suicide", "gamble"
+    ]
+    for term in harmful_terms:
+        if term in cleaned_lower:
+            raise ValueError(f"Keyword contains restricted term: '{term}'")
+
+    return cleaned
 
 
 @mcp.tool()
@@ -17,6 +91,16 @@ def fetch_amazon_brands(keyword: str) -> str:
     Returns:
         A JSON string containing the search keyword and brand classification results.
     """
+    try:
+        keyword = validate_keyword(keyword)
+    except ValueError as e:
+        error_result = {
+            "keyword": keyword,
+            "error": f"Validation failed: {e}",
+            "suggestions": [],
+        }
+        return json.dumps(error_result, indent=2)
+
     if keyword == "mock_payload":
         result = {
             "keyword": "mock_payload",
@@ -70,7 +154,7 @@ def fetch_amazon_brands(keyword: str) -> str:
 
 
 @mcp.tool()
-def query_saved_reports(keyword: str = None) -> str:
+def query_saved_reports(keyword: str | None = None) -> str:
     """Reads the saved compliance audit reports from the database file and optionally filters them by keyword.
 
     Args:
@@ -85,9 +169,9 @@ def query_saved_reports(keyword: str = None) -> str:
         return json.dumps({"status": "empty", "message": f"No reports saved yet at {os.path.abspath(db_path)}.", "reports": []})
 
     try:
-        with open(db_path, "r") as f:
+        with open(db_path) as f:
             reports = json.load(f)
-        
+
         if keyword:
             keyword_lower = keyword.lower()
             filtered_reports = []
@@ -98,10 +182,10 @@ def query_saved_reports(keyword: str = None) -> str:
                 title = report_data.get("title", "").lower()
                 summary = report_data.get("extracted_receipts_summary", "").lower()
                 mapping = report_data.get("dma_compliance_mapping", "").lower()
-                
-                if (keyword_lower in notes or 
-                    keyword_lower in title or 
-                    keyword_lower in summary or 
+
+                if (keyword_lower in notes or
+                    keyword_lower in title or
+                    keyword_lower in summary or
                     keyword_lower in mapping):
                     filtered_reports.append(r)
             reports = filtered_reports
@@ -120,11 +204,11 @@ def query_dma_rag(query: str) -> str:
         A JSON string containing the list of matching document chunks, including sources and relevance.
     """
     import os
-    
+
     project_id = os.environ.get("VERTEX_AI_SEARCH_PROJECT_ID")
     location = os.environ.get("VERTEX_AI_SEARCH_LOCATION", "global")
     data_store_id = os.environ.get("VERTEX_AI_SEARCH_DATA_STORE_ID")
-    
+
     # Simple semantic keyword matching mock/simulated fallback if config is missing
     def get_simulated_chunks(q: str):
         q_lower = q.lower()
@@ -172,9 +256,9 @@ def query_dma_rag(query: str) -> str:
     # Production Vertex AI Search flow
     try:
         from google.cloud import discoveryengine_v1 as discoveryengine
-        
+
         client = discoveryengine.SearchServiceClient()
-        
+
         # Build serving config path
         serving_config = (
             f"projects/{project_id}/locations/{location}"
@@ -203,7 +287,7 @@ def query_dma_rag(query: str) -> str:
             doc_data = result.document.derived_struct_data
             segments = doc_data.get("extractive_segments", [])
             title = doc_data.get("title", "Digital Markets Act")
-            
+
             for segment in segments:
                 chunks.append({
                     "content": segment.get("content", ""),
@@ -236,7 +320,7 @@ def query_dma_rag(query: str) -> str:
             }, indent=2)
         return json.dumps({
             "status": "error",
-            "message": f"Vertex AI Search failed and no local fallback matches were found: {str(e)}",
+            "message": f"Vertex AI Search failed and no local fallback matches were found: {e!s}",
             "chunks": []
         }, indent=2)
 
