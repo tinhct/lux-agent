@@ -201,8 +201,6 @@ In the local development environment, the agent communicates with the tools via 
     `https://completion.amazon.com/api/2017/suggestions`
   * `query_dma_rag`: If Google Cloud credentials and Vertex AI Search environment variables (`VERTEX_AI_SEARCH_PROJECT_ID`, etc.) are configured, it queries the GCP Discovery Engine API. If missing, it runs a local in-memory simulation (keyword matching mock chunks) directly in Python.
 
----
-
 ### 2. Deployed (Cloud) Transaction Flow (via Researcher Portal)
 
 When deployed to Google Cloud (Vertex AI Reasoning Engine / Agent Runtime), the local `mcp_server` folder does not exist. The agent code dynamically detects this and falls back to running the tools as native Python functions defined inside `app/agent.py`.
