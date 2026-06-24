@@ -2,7 +2,7 @@
 
 **Project Overview:**
 
-This is the capstone project for the course "5-Day AI Agents: Intensive Vibe Coding Course With Google and Kaggle." Its purpose is to showcase what I have learned by implementing a practical product: From Vibecoding to Agentic Engineering and Loop Engineering.
+This is the capstone project for the course "5-Day AI Agents: Intensive Vibe Coding Course With Google" on Kaggle. Its purpose is to showcase what I have learned by designing and implementing a practical modern AI agent system: from Vibecoding to Agentic Engineering and Loop Engineering.
 
 ### **Problem Definition**
 

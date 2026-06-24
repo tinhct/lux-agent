@@ -4,6 +4,7 @@ import os
 from typing import Any
 
 import vertexai
+from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
@@ -28,6 +29,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Load environment variables from root .env if present
+load_dotenv(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".env")))
+
 # Retrieve configuration from environment variables with fallbacks
 PROJECT_ID = os.environ.get("GOOGLE_CLOUD_PROJECT")
 LOCATION = os.environ.get("GOOGLE_CLOUD_LOCATION", "us-central1")
@@ -42,21 +46,42 @@ if not PROJECT_ID or not AGENT_RUNTIME_ID:
         try:
             with open(meta_path) as f:
                 meta = json.load(f)
-                if not PROJECT_ID:
-                    PROJECT_ID = "gen-lang-client-0096535740"
                 if not AGENT_RUNTIME_ID:
                     AGENT_RUNTIME_ID = meta.get("remote_agent_runtime_id")
+
+                # Extract PROJECT_ID from AGENT_RUNTIME_ID if not already set
+                if not PROJECT_ID and AGENT_RUNTIME_ID:
+                    parts = AGENT_RUNTIME_ID.split("/")
+                    if len(parts) > 1 and parts[0] == "projects":
+                        PROJECT_ID = parts[1]
+
+                # Extract LOCATION from AGENT_RUNTIME_ID if not already set
+                if not os.environ.get("GOOGLE_CLOUD_LOCATION") and AGENT_RUNTIME_ID:
+                    parts = AGENT_RUNTIME_ID.split("/")
+                    if len(parts) > 3 and parts[2] == "locations":
+                        LOCATION = parts[3]
+
                 logger.info(
                     f"Loaded config from metadata: project={PROJECT_ID}, runtime={AGENT_RUNTIME_ID}"
                 )
         except Exception as e:
             logger.warning(f"Failed to read deployment_metadata.json: {e}")
 
-# Apply final defaults if still unconfigured
+# Apply final defaults using google.auth if still unconfigured
 if not PROJECT_ID:
-    PROJECT_ID = "gen-lang-client-0096535740"
+    try:
+        import google.auth
+        _, auth_project = google.auth.default()
+        if auth_project:
+            PROJECT_ID = auth_project
+    except Exception as e:
+        logger.warning(f"Failed to load project ID from google.auth: {e}")
+
+if not PROJECT_ID:
+    logger.error("GOOGLE_CLOUD_PROJECT environment variable is not set and could not be detected via google.auth.")
+
 if not AGENT_RUNTIME_ID:
-    AGENT_RUNTIME_ID = "projects/204996083024/locations/us-central1/reasoningEngines/3573666227702202368"
+    logger.warning("AGENT_RUNTIME_ID environment variable is not set. The dashboard may not be able to connect to a deployed agent.")
 
 logger.info(
     f"LUX Dashboard active: Project={PROJECT_ID}, Location={LOCATION}, AgentRuntimeID={AGENT_RUNTIME_ID}"
