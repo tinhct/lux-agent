@@ -55,17 +55,27 @@ if not PROJECT_ID or not AGENT_RUNTIME_ID:
                     if len(parts) > 1 and parts[0] == "projects":
                         PROJECT_ID = parts[1]
 
-                # Extract LOCATION from AGENT_RUNTIME_ID if not already set
-                if not os.environ.get("GOOGLE_CLOUD_LOCATION") and AGENT_RUNTIME_ID:
-                    parts = AGENT_RUNTIME_ID.split("/")
-                    if len(parts) > 3 and parts[2] == "locations":
-                        LOCATION = parts[3]
-
                 logger.info(
                     f"Loaded config from metadata: project={PROJECT_ID}, runtime={AGENT_RUNTIME_ID}"
                 )
         except Exception as e:
             logger.warning(f"Failed to read deployment_metadata.json: {e}")
+
+# CRITICAL: Always derive LOCATION from AGENT_RUNTIME_ID when available.
+# The runtime resource name (projects/.../locations/<region>/reasoningEngines/...)
+# is the authoritative source for the deployment region. The .env file may set
+# GOOGLE_CLOUD_LOCATION=global for the Gemini model API, but the Session Service
+# requires the actual deployment region (e.g., us-central1).
+if AGENT_RUNTIME_ID:
+    parts = AGENT_RUNTIME_ID.split("/")
+    if len(parts) > 3 and parts[2] == "locations":
+        derived_location = parts[3]
+        if LOCATION != derived_location:
+            logger.warning(
+                f"Overriding LOCATION '{LOCATION}' with '{derived_location}' "
+                f"derived from AGENT_RUNTIME_ID (authoritative source)"
+            )
+        LOCATION = derived_location
 
 # Apply final defaults using google.auth if still unconfigured
 if not PROJECT_ID:
@@ -345,9 +355,149 @@ async def get_dashboard():
         ::-webkit-scrollbar-thumb:hover {
             background: rgba(255, 255, 255, 0.25);
         }
+
+        /* Toast Notification System */
+        .toast-container {
+            position: fixed;
+            top: 1.25rem;
+            right: 1.25rem;
+            z-index: 100;
+            display: flex;
+            flex-direction: column;
+            gap: 0.75rem;
+            pointer-events: none;
+            max-width: 28rem;
+        }
+        .toast {
+            pointer-events: auto;
+            display: flex;
+            flex-direction: column;
+            border-radius: 1rem;
+            overflow: hidden;
+            backdrop-filter: blur(24px);
+            -webkit-backdrop-filter: blur(24px);
+            box-shadow: 0 8px 32px rgba(0,0,0,0.45), 0 0 0 1px rgba(255,255,255,0.06);
+            animation: toastSlideIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+            transform: translateX(120%);
+        }
+        .toast.toast-dismiss {
+            animation: toastSlideOut 0.35s cubic-bezier(0.7, 0, 0.84, 0) forwards;
+        }
+        .toast-validation {
+            background: rgba(30, 22, 8, 0.92);
+            border: 1px solid rgba(251, 191, 36, 0.25);
+        }
+        .toast-error {
+            background: rgba(30, 8, 8, 0.92);
+            border: 1px solid rgba(239, 68, 68, 0.25);
+        }
+        .toast-body {
+            display: flex;
+            align-items: flex-start;
+            gap: 0.75rem;
+            padding: 1rem 1rem 0.85rem 1rem;
+        }
+        .toast-icon {
+            flex-shrink: 0;
+            width: 2.25rem;
+            height: 2.25rem;
+            border-radius: 0.625rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .toast-validation .toast-icon {
+            background: rgba(251, 191, 36, 0.12);
+            color: #fbbf24;
+        }
+        .toast-error .toast-icon {
+            background: rgba(239, 68, 68, 0.12);
+            color: #ef4444;
+        }
+        .toast-content {
+            flex: 1;
+            min-width: 0;
+        }
+        .toast-title {
+            font-size: 0.8125rem;
+            font-weight: 600;
+            margin-bottom: 0.2rem;
+        }
+        .toast-validation .toast-title { color: #fbbf24; }
+        .toast-error .toast-title { color: #f87171; }
+        .toast-message {
+            font-size: 0.8125rem;
+            line-height: 1.5;
+            color: #94a3b8;
+        }
+        .toast-close {
+            flex-shrink: 0;
+            width: 1.75rem;
+            height: 1.75rem;
+            border-radius: 0.5rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #64748b;
+            background: transparent;
+            border: none;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .toast-close:hover {
+            background: rgba(255,255,255,0.06);
+            color: #e2e8f0;
+        }
+        .toast-progress {
+            height: 3px;
+            width: 100%;
+            position: relative;
+        }
+        .toast-validation .toast-progress { background: rgba(251,191,36,0.08); }
+        .toast-error .toast-progress { background: rgba(239,68,68,0.08); }
+        .toast-progress-bar {
+            position: absolute;
+            top: 0;
+            left: 0;
+            height: 100%;
+            border-radius: 0 0 0 1rem;
+            animation: toastCountdown linear forwards;
+        }
+        .toast-validation .toast-progress-bar { background: rgba(251,191,36,0.5); }
+        .toast-error .toast-progress-bar { background: rgba(239,68,68,0.5); }
+
+        @keyframes toastSlideIn {
+            from { transform: translateX(120%); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+        @keyframes toastSlideOut {
+            from { transform: translateX(0); opacity: 1; }
+            to { transform: translateX(120%); opacity: 0; }
+        }
+        @keyframes toastCountdown {
+            from { width: 100%; }
+            to { width: 0%; }
+        }
+
+        /* Input shake animation for validation errors */
+        @keyframes inputShake {
+            0%, 100% { transform: translateX(0); }
+            10%, 30%, 50%, 70%, 90% { transform: translateX(-4px); }
+            20%, 40%, 60%, 80% { transform: translateX(4px); }
+        }
+        .input-shake {
+            animation: inputShake 0.5s cubic-bezier(.36,.07,.19,.97) both;
+        }
+        .input-error {
+            border-color: rgba(251, 191, 36, 0.6) !important;
+            box-shadow: 0 0 0 3px rgba(251, 191, 36, 0.1), 0 0 16px rgba(251, 191, 36, 0.08) !important;
+        }
     </style>
 </head>
 <body class="h-full text-slate-100 glow-bg cyber-grid overflow-hidden flex flex-col">
+
+    <!-- Toast Notification Container -->
+    <div id="toast-container" class="toast-container"></div>
 
     <!-- Loading Overlay (Subtle translucent screen-wide blur for action execution) -->
     <div id="loading-overlay" style="opacity: 0;" class="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-50 flex flex-col items-center justify-center space-y-4 transition-all duration-300 hidden">
@@ -544,6 +694,61 @@ async def get_dashboard():
     <script>
         let pendingSessions = [];
         let activeSession = null;
+
+        // ── Toast Notification System ──────────────────────────────────
+        function showToast(type, title, message, durationMs = 8000) {
+            const container = document.getElementById('toast-container');
+            const toastId = 'toast-' + Date.now();
+
+            const iconSvg = type === 'validation'
+                ? `<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z"/></svg>`
+                : `<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>`;
+
+            const toast = document.createElement('div');
+            toast.id = toastId;
+            toast.className = `toast toast-${type}`;
+            toast.innerHTML = `
+                <div class="toast-body">
+                    <div class="toast-icon">${iconSvg}</div>
+                    <div class="toast-content">
+                        <div class="toast-title">${title}</div>
+                        <div class="toast-message">${message}</div>
+                    </div>
+                    <button class="toast-close" onclick="dismissToast('${toastId}')">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                    </button>
+                </div>
+                <div class="toast-progress">
+                    <div class="toast-progress-bar" style="animation-duration: ${durationMs}ms;"></div>
+                </div>
+            `;
+            container.appendChild(toast);
+
+            // Auto-dismiss after duration
+            setTimeout(() => dismissToast(toastId), durationMs);
+        }
+
+        function dismissToast(toastId) {
+            const toast = document.getElementById(toastId);
+            if (!toast || toast.classList.contains('toast-dismiss')) return;
+            toast.classList.add('toast-dismiss');
+            setTimeout(() => toast.remove(), 350);
+        }
+
+        function shakeInput() {
+            const input = document.getElementById('keyword-input');
+            input.classList.add('input-shake', 'input-error');
+            setTimeout(() => {
+                input.classList.remove('input-shake');
+            }, 600);
+            // Remove error border after 4s or on next focus
+            const clearError = () => {
+                input.classList.remove('input-error');
+                input.removeEventListener('focus', clearError);
+            };
+            setTimeout(clearError, 4000);
+            input.addEventListener('focus', clearError, { once: true });
+        }
 
         // Custom Tokyo Night/One Dark JSON Syntax Highlighter
         function syntaxHighlight(json) {
@@ -766,7 +971,8 @@ async def get_dashboard():
             const keywordInput = document.getElementById('keyword-input');
             const keyword = keywordInput.value.trim();
             if (!keyword) {
-                alert('Please enter a keyword query to audit.');
+                showToast('validation', 'Input Required', 'Please enter a keyword query to audit.', 5000);
+                shakeInput();
                 return;
             }
 
@@ -791,8 +997,18 @@ async def get_dashboard():
                 });
 
                 if (!res.ok) {
-                    const err = await res.json();
-                    throw new Error(err.detail || 'Audit execution failed');
+                    const errBody = await res.json().catch(() => ({ detail: 'Unknown error' }));
+                    const detail = errBody.detail || 'Audit execution failed';
+
+                    if (res.status === 400) {
+                        // Validation error from validate_prompt_node
+                        showToast('validation', 'Validation Failed', detail, 10000);
+                        shakeInput();
+                        resetWorkspace();
+                        return;
+                    }
+                    // Other non-OK status (500, etc.)
+                    throw new Error(detail);
                 }
 
                 const data = await res.json();
@@ -810,7 +1026,7 @@ async def get_dashboard():
                 await fetchPendingSessions();
             } catch (err) {
                 console.error(err);
-                alert(`Audit Failed: ${err.message}`);
+                showToast('error', 'Audit Error', err.message || 'An unexpected error occurred while running the audit.', 10000);
 
                 // Reset views to empty states
                 resetWorkspace();
@@ -885,7 +1101,7 @@ async def get_dashboard():
                 await fetchPendingSessions();
             } catch (err) {
                 console.error(err);
-                alert(`Action Failed: ${err.message}`);
+                showToast('error', 'Action Failed', err.message || 'Failed to dispatch the review action.', 10000);
 
                 // Unlock actions on error
                 document.getElementById(inactiveBtnId).disabled = false;

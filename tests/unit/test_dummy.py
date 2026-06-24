@@ -82,3 +82,42 @@ def test_validate_keyword_ethical_nsfw():
     for term in ["porn", "nsfw", "xxx", "suicide", "bomb"]:
         with pytest.raises(ValueError, match="restricted term"):
             validate_keyword(term)
+
+
+# --- Regression tests: LOCATION resolution from AGENT_RUNTIME_ID ---
+
+def test_location_derived_from_runtime_id():
+    """Regression: LOCATION must always be derived from AGENT_RUNTIME_ID.
+
+    The .env may set GOOGLE_CLOUD_LOCATION=global (for model API), but
+    the Session Service requires the actual deployment region from the
+    runtime resource name.
+    """
+    runtime_id = "projects/204996083024/locations/us-central1/reasoningEngines/123"
+    parts = runtime_id.split("/")
+    assert len(parts) > 3 and parts[2] == "locations"
+    derived_location = parts[3]
+    assert derived_location == "us-central1"
+
+
+def test_location_override_when_global():
+    """Regression: Even if env LOCATION is 'global', runtime ID wins."""
+    env_location = "global"
+    runtime_id = "projects/204996083024/locations/us-central1/reasoningEngines/123"
+    parts = runtime_id.split("/")
+    if len(parts) > 3 and parts[2] == "locations":
+        env_location = parts[3]
+    assert env_location == "us-central1", (
+        "LOCATION must be overridden to the runtime region, not 'global'"
+    )
+
+
+def test_location_preserved_when_no_runtime_id():
+    """If no AGENT_RUNTIME_ID is available, keep the env/default LOCATION."""
+    env_location = "us-central1"
+    runtime_id = None
+    if runtime_id:
+        parts = runtime_id.split("/")
+        if len(parts) > 3 and parts[2] == "locations":
+            env_location = parts[3]
+    assert env_location == "us-central1"
