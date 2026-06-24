@@ -1,6 +1,6 @@
 # LUX (Legal Uncovering, eXplainable) Agent
 
-**Project Overview:**
+### **Project Overview**
 
 This is the capstone project for the course "5-Day AI Agents: Intensive Vibe Coding Course With Google" on Kaggle. Its purpose is to showcase what I have learned by designing and implementing a practical modern AI agent system: from Vibecoding to Agentic Engineering and Loop Engineering.
 
@@ -228,8 +228,7 @@ LUX automatically exports tracing telemetry and logs to:
 
 ## **Future Enhancement Opportunities**
 
-* Translating legal requirements (e.g., DSA transparency obligations) into technical testing parameters, drafting the accountability reporting checklist, and cross-referencing findings against academic literature.  
-* Formulating the core journalistic/research hypothesis, authorizing large-scale data collection that risks overloading servers, interpreting legal gray areas, and determining if a story or investigation should be killed due to fatal flaws.
+* Translating legal requirements (e.g., DMA, AI Act, GDPR, DSA transparency obligations) into technical testing parameters, drafting the accountability reporting checklist, and cross-referencing findings against academic literature.  
 
 ---
 
