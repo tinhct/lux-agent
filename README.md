@@ -52,25 +52,26 @@ graph TD
     User([User / Researcher]) -->|1. Inputs Keyword e.g. batteries| START
     
     subgraph Workflow ["Stateful Graph (lux_audit_graph)"]
-        START[START Node] -->|2. Execute Extraction| API["API Inspector Node (api_inspector)"]
-        API -->|3. Invoke Tool| Tool1["fetch_amazon_brands"]
-        Tool1 -->|4. Return Suggestions| API
-        API -->|5. Structured Output| DM["Defense Middleware (defense_middleware_node)"]
-        DM -->|6. Sanitized Output| SC["Security Checkpoint (security_checkpoint_node)"]
+        START[START Node] -->|2. Validate Input| VAL["Input Validation (validate_prompt_node)"]
+        VAL -->|3. Cleaned Keyword| API["API Inspector Node (api_inspector)"]
+        API -->|4. Invoke Tool| Tool1["fetch_amazon_brands"]
+        Tool1 -->|5. Return Suggestions| API
+        API -->|6. Structured Output| DM["Defense Middleware (defense_middleware_node)"]
+        DM -->|7. Sanitized Output| SC["Security Checkpoint (security_checkpoint_node)"]
         
-        SC -->|7a. Safe Path| RA["Regulatory Analyst Node (regulatory_analyst)"]
-        SC -->|7b. Injection Detected| HITL["HITL Pause Node (hitl_pause_node)"]
+        SC -->|8a. Safe Path| RA["Regulatory Analyst Node (regulatory_analyst)"]
+        SC -->|8b. Injection Detected| HITL["HITL Pause Node (hitl_pause_node)"]
         
-        RA -->|8. Query RAG| Tool2["query_dma_rag"]
-        Tool2 -->|9. Legal Quotes & Chunks| RA
-        RA -->|10. Draft Compliance Report| HITL
+        RA -->|9. Query RAG| Tool2["query_dma_rag"]
+        Tool2 -->|10. Legal Quotes & Chunks| RA
+        RA -->|11. Draft Compliance Report| HITL
         
-        HITL -->|11. Await Approval / Input| HITL_Approve{User Decision}
+        HITL -->|12. Await Approval / Input| HITL_Approve{User Decision}
         HITL_Approve -->|Approve / Reject| FR["Finalize Report Node (finalize_report_node)"]
     end
     
-    FR -->|12. If Approved: Save Audit| DB[(audit_db.json)]
-    FR -->|13. Result Return| User
+    FR -->|13. If Approved: Save Audit| DB[(audit_db.json)]
+    FR -->|14. Result Return| User
 ```
 
 ### **Tech Stack**
@@ -85,6 +86,7 @@ graph TD
 
 ### **Governance, Risks, and Safeguards**
 
+* **Pre-Execution Input Validation**: User queries are sanitized and validated at the graph entry point (`validate_prompt_node`) before triggering any LLM agent or tool execution, protecting the system from prompt injection, PII ingestion, URL/ASIN spam, and invalid search queries.
 * **Prompt-Injection Defense**: The API Inspector runs strictly in an isolated MCP container. Raw scraped JSON is recursively sanitized before being passed into the Regulatory Analyst's context window.
 * **PII Redaction**: Raw receipts and payloads are passed through a regex-based redaction filter in the security checkpoint that intercepts and masks sensitive data such as SSNs and credit card numbers.
 * **Strict HITL**: The system is hardcoded to pause state. It cannot publish or finalize a compliance report without explicit human API authorization.  
