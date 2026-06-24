@@ -185,6 +185,44 @@ agents-cli deploy
 
 ---
 
+## **Testing Notes**
+
+  ### 1. Local Test Transaction Flow (via Local Playground UI)                                                                 
+                                                                                                                               
+  In the local development environment, the agent communicates with the tools via the Model Context Protocol (MCP).            
+                                                                                                                               
+  • Server Process / Command: The playground launches the MCP server locally as a subprocess using:                            
+    uv run --project mcp_server python mcp_server/server.py                                                                    
+                                                                                                                               
+  • Endpoint / Protocol: There is no HTTP endpoint or port. The local agent communicates with the MCP server using JSON-RPC    
+  over standard input/output (stdio).                                                                                          
+  • Underlying Services Called by the Local MCP Server:                                                                        
+      •  fetch_amazon_brands : Queries the public Amazon API endpoint:                                                         
+       https://completion.amazon.com/api/2017/suggestions                                                                      
+      •  query_dma_rag : If Google Cloud credentials and Vertex AI Search environment variables ( VERTEX_AI_SEARCH_PROJECT_ID ,
+      etc.) are configured, it queries the GCP Discovery Engine API. If missing, it runs a local in-memory simulation (keyword 
+      matching mock chunks) directly in Python.                                                                                
+                                                                                                                                                                                                
+  ### 2. Deployed (Cloud) Transaction Flow (via Researcher Portal)                                                             
+                                                                                                                               
+  When deployed to Google Cloud (Vertex AI Reasoning Engine / Agent Runtime), the local  mcp_server  folder does not exist. The
+  agent code dynamically detects this and falls back to running the tools as native Python functions defined inside            
+  agent.py.                                                                                                              
+                                                                                                                               
+  •  fetch_amazon_brands  Endpoint:                                                                                            
+      • Directly makes an HTTP GET request to the Amazon completion endpoint:                                                  
+       https://completion.amazon.com/api/2017/suggestions                                                                      
+  •  query_dma_rag  Endpoint:                                                                                                  
+      • Calls the Vertex AI Search (Discovery Engine) API via the Google Cloud Client Library:                                 
+        discoveryengine.SearchServiceClient()                                                                                  
+                                                                                                                               
+      • The serving configuration path queried is:                                                                             
+                                                                                                                               
+  projects/{project_id}/locations/{location}/collections/default_collection/dataStores/{data_store_id}/servingConfigs/defau    
+      lt_search                                                                                                                
+      • If Vertex AI Search configuration parameters are not set, it executes the local in-memory simulation.     
+---
+
 ## **Observability**
 
 LUX automatically exports tracing telemetry and logs to:
