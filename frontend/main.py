@@ -1186,4 +1186,5 @@ if __name__ == "__main__":
     import uvicorn
 
     # Serve locally on port 8081 (to avoid conflict with local playground on 8080)
-    uvicorn.run(app, host="0.0.0.0", port=8081)
+    port = int(os.environ.get("PORT", 8081))
+    uvicorn.run(app, host="0.0.0.0", port=port)
