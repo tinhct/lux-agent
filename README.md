@@ -217,9 +217,11 @@ When deployed to Google Cloud (Vertex AI Reasoning Engine / Agent Runtime), the 
     `projects/{project_id}/locations/{location}/collections/default_collection/dataStores/{data_store_id}/servingConfigs/default_search`
   * If Vertex AI Search configuration parameters are not set, it executes the local in-memory simulation.
 
-### 3. Evaluation Report — Key Highlights
+---
 
-#### Comprehensive Test Suite
+## **Evaluation Report — Key Highlights**
+
+### Comprehensive Test Suite
 
 The project employs a **three-tier testing strategy** spanning unit tests, integration tests, and agentic evaluations:
 
@@ -249,7 +251,7 @@ The project employs a **three-tier testing strategy** spanning unit tests, integ
 
 * **3 eval dataset cases** (`tests/eval/datasets/lux-audit-dataset.json`): `mock_payload_parsing` (deterministic mock path), `dma_citation` (live API + RAG), `hitl_interception` (novel keyword halt check).
 
-#### Evaluation Results
+### Evaluation Results
 
 * **Eval run (2026-06-22)** — **9/9 perfect scores** (1.0 mean, 0.0 std dev, 0 errors):
 
@@ -268,7 +270,7 @@ The project employs a **three-tier testing strategy** spanning unit tests, integ
   | `batteries` | Medium | ✅ Approved | Neutral suggestions; deeper algorithm audit recommended |
   | `book` | Low | ✅ Approved | All suggestions third-party; affiliated brands noted |
 
-#### Key Validations
+### Key Validations
 
 * **Security (5 validations):**
   * Pre-execution input sanitization via `validate_prompt_node` (runs before any LLM/tool)
