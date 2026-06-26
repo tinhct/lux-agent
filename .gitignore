@@ -205,3 +205,4 @@ tools/a2a-inspector/
 
 # Local databases
 audit_db.json
+scripts/reject_pending_sessions.py

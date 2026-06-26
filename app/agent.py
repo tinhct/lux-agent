@@ -21,6 +21,18 @@ from typing import Any
 from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
 
+class RateLimitException(Exception):
+    pass
+
+
+class APIAuthenticationError(Exception):
+    pass
+
+
+class TransientServerError(Exception):
+    pass
+
+
 from google.adk.agents import LlmAgent
 from google.adk.apps import App
 from google.adk.models import Gemini
@@ -130,44 +142,183 @@ def fetch_amazon_brands(keyword: str) -> dict[str, Any]:
         keyword: The search keyword (e.g. 'batteries', 'spicy') to query.
 
     Returns:
-        A dictionary containing the search keyword and brand classification results.
+        A dictionary containing the search keyword and brand classification results matching amazon_api_schema.md.
     """
+    import datetime
+    import time
+    import random
+    import re
     import requests
 
+    timestamp_utc = datetime.datetime.now(datetime.timezone.utc).isoformat()
+
     try:
-        keyword = validate_keyword(keyword)
+        cleaned_keyword = validate_keyword(keyword)
     except ValueError as e:
         return {
-            "keyword": keyword,
-            "error": f"Validation failed: {e}",
-            "suggestions": [],
+            "audit_metadata": {
+                "keyword": keyword,
+                "timestamp_utc": timestamp_utc,
+                "status_code": 400
+            },
+            "results": [],
+            "error_log": f"Validation failed: {e}"
         }
 
-    if keyword == "mock_payload":
-        result = {
-            "keyword": "mock_payload",
-            "suggestions": [
-                {"value": "amazon basics batteries", "brand_type": "house_brand"},
-                {"value": "energizer aa batteries", "brand_type": "third_party"},
+    if cleaned_keyword == "mock_payload":
+        return {
+            "audit_metadata": {
+                "keyword": "mock_payload",
+                "timestamp_utc": timestamp_utc,
+                "status_code": 200
+            },
+            "results": [
+                {"rank": 1, "value": "amazon basics batteries", "brand_type": "house_brand"},
+                {"rank": 2, "value": "energizer aa batteries", "brand_type": "third_party"},
             ],
+            "error_log": None
         }
-        return result
 
     url = "https://completion.amazon.com/api/2017/suggestions"
     params = {
         "mid": "ATVPDKIKX0DER",
         "alias": "aps",
-        "prefix": keyword,
+        "prefix": cleaned_keyword,
         "suggestion-type": "keyword",
     }
 
-    try:
-        response = requests.get(url, params=params, timeout=10)
-        response.raise_for_status()
-        data = response.json()
+    # Default headers
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
 
-        suggestions = []
-        for item in data.get("suggestions", []):
+    attempted_clean_retry = False
+    max_429_attempts = 3
+    attempt_429 = 0
+    status_code = 200
+    error_log = None
+    data = None
+
+    while True:
+        try:
+            response = requests.get(url, params=params, headers=headers, timeout=10)
+            status_code = response.status_code
+
+            if status_code == 429:
+                attempt_429 += 1
+                if attempt_429 <= max_429_attempts:
+                    base_sleep = 2.0 * (2 ** (attempt_429 - 1))
+                    jitter = random.uniform(0, 0.5)
+                    time.sleep(base_sleep + jitter)
+                    continue
+                else:
+                    raise RateLimitException(
+                        "Audit paused due to strict API rate limiting. Manual IP rotation or cooling period required."
+                    )
+
+            if status_code in (401, 403):
+                if not attempted_clean_retry:
+                    headers = {
+                        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                    }
+                    attempted_clean_retry = True
+                    continue
+                else:
+                    raise APIAuthenticationError(
+                        "API authentication rejected. The undocumented suggestion endpoint may have updated its security posture."
+                    )
+
+            if status_code in (502, 503, 504):
+                time.sleep(5.0)
+                response = requests.get(url, params=params, headers=headers, timeout=10)
+                status_code = response.status_code
+                if status_code in (502, 503, 504):
+                    raise TransientServerError(
+                        "Transient server error: Amazon load balancer or server is down."
+                    )
+
+            response.raise_for_status()
+            data = response.json()
+            break
+
+        except requests.exceptions.RequestException as e:
+            if e.response is not None:
+                status_code = e.response.status_code
+                if status_code == 429:
+                    attempt_429 += 1
+                    if attempt_429 <= max_429_attempts:
+                        base_sleep = 2.0 * (2 ** (attempt_429 - 1))
+                        jitter = random.uniform(0, 0.5)
+                        time.sleep(base_sleep + jitter)
+                        continue
+                    else:
+                        error_log = "RateLimitException: Audit paused due to strict API rate limiting. Manual IP rotation or cooling period required."
+                        break
+                elif status_code in (401, 403):
+                    if not attempted_clean_retry:
+                        headers = {
+                            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                        }
+                        attempted_clean_retry = True
+                        continue
+                    else:
+                        error_log = "APIAuthenticationError: API authentication rejected. The undocumented suggestion endpoint may have updated its security posture."
+                        break
+                elif status_code in (502, 503, 504):
+                    time.sleep(5.0)
+                    try:
+                        response = requests.get(url, params=params, headers=headers, timeout=10)
+                        status_code = response.status_code
+                        response.raise_for_status()
+                        data = response.json()
+                        break
+                    except Exception as e_retry:
+                        error_log = f"TransientServerError: Transient server error: Amazon load balancer or server is down: {e_retry}"
+                        break
+            error_log = f"NetworkException: Failed to fetch suggestions from Amazon API: {e}"
+            break
+        except (RateLimitException, APIAuthenticationError, TransientServerError) as e:
+            error_log = f"{e.__class__.__name__}: {e}"
+            break
+        except Exception as e:
+            error_log = f"Exception: Failed to fetch suggestions: {e}"
+            break
+
+    if error_log:
+        return {
+            "audit_metadata": {
+                "keyword": cleaned_keyword,
+                "timestamp_utc": timestamp_utc,
+                "status_code": status_code
+            },
+            "results": [],
+            "error_log": error_log
+        }
+
+    raw_suggestions = data.get("suggestions", [])
+    
+    # 2. Soft Fails
+    common_keywords = {"batteries", "basics", "amazon", "kindle", "spicy"}
+    if not raw_suggestions and cleaned_keyword.lower() in common_keywords:
+        error_log = "AnomalyWarning: Common keyword returned empty suggestions. Shadow-ban or malformed parameters suspected."
+    
+    elif raw_suggestions:
+        keyword_words = set(re.findall(r"\w+", cleaned_keyword.lower()))
+        has_overlap = False
+        for item in raw_suggestions:
+            val = item.get("value", "").lower()
+            val_words = set(re.findall(r"\w+", val))
+            if keyword_words.intersection(val_words):
+                has_overlap = True
+                break
+        
+        if not has_overlap:
+            error_log = "Data extraction failed: API returned generic category fallbacks rather than keyword-specific recommendations."
+            raw_suggestions = []
+
+    results = []
+    if not error_log or "AnomalyWarning" in error_log:
+        for index, item in enumerate(raw_suggestions):
             value = item.get("value", "")
             if (
                 "amazon" in value.lower()
@@ -178,19 +329,22 @@ def fetch_amazon_brands(keyword: str) -> dict[str, Any]:
                 brand_type = "house_brand"
             else:
                 brand_type = "third_party"
+            
+            results.append({
+                "rank": index + 1,
+                "value": value,
+                "brand_type": brand_type
+            })
 
-            suggestions.append({"value": value, "brand_type": brand_type})
-
-        result = {"keyword": keyword, "suggestions": suggestions}
-        return result
-
-    except Exception as e:
-        error_result = {
-            "keyword": keyword,
-            "error": f"Failed to fetch suggestions from Amazon API: {e}",
-            "suggestions": [],
-        }
-        return error_result
+    return {
+        "audit_metadata": {
+            "keyword": cleaned_keyword,
+            "timestamp_utc": timestamp_utc,
+            "status_code": status_code
+        },
+        "results": results,
+        "error_log": error_log
+    }
 
 
 def query_dma_rag(query: str) -> dict[str, Any]:
@@ -389,6 +543,8 @@ class APIInspectorOutput(BaseModel):
     raw_results: list[SuggestionItem] = Field(
         description="List of brand suggestions returned by the API"
     )
+    error_log: str | None = Field(default=None, description="Any error or exception details from the API inspector")
+    status_code: int | None = Field(default=200, description="The HTTP status code returned by the API")
 
 
 api_inspector_node = LlmAgent(
@@ -404,7 +560,10 @@ api_inspector_node = LlmAgent(
         "Format the suggestions extracted from the tool exactly according to the output schema. "
         "You must map the suggestions list to the raw_results list as structured JSON objects (not JSON strings), "
         "where each object has 'value' and 'brand_type' as direct keys. For example: "
-        '{"value": "aa batteries", "brand_type": "third_party"}. Do NOT output string representations of JSON.'
+        '{"value": "aa batteries", "brand_type": "third_party"}. '
+        "If the tool returns an error_log or status_code, you must copy the error_log and status_code "
+        "exactly to the output schema fields. "
+        "Do NOT output string representations of JSON."
     ),
     tools=api_inspector_tools,
     output_schema=APIInspectorOutput,
@@ -559,6 +718,47 @@ def security_checkpoint_node(ctx: Context, node_input: dict):
 
     redacted_list = list(redacted_categories)
 
+    # Check for RateLimitException or APIAuthenticationError
+    error_log_val = str(scrubbed_payload.get("error_log", "")) if scrubbed_payload.get("error_log") else ""
+    
+    if "RateLimitException" in error_log_val:
+        flagged_report = {
+            "title": "RATE LIMIT AUDIT ALERT: API Rate Limited",
+            "extracted_receipts_summary": "Audit paused due to strict API rate limiting. Manual IP rotation or cooling period required.",
+            "dma_compliance_mapping": "BLOCKED BY RATE LIMIT EXCEPTION.",
+            "risk_assessment": "HIGH RISK: Incomplete audit due to rate limit.",
+            "security_event": False,
+            "rate_limit_event": True,
+        }
+        event = Event(output=flagged_report)
+        event.actions.route = "security_flagged"
+        event.actions.state_delta = {
+            "redacted_categories": redacted_list,
+            "security_flagged": False,
+            "rate_limit_flagged": True,
+        }
+        yield event
+        return
+
+    if "APIAuthenticationError" in error_log_val:
+        flagged_report = {
+            "title": "AUTHENTICATION AUDIT ALERT: API Authentication Rejected",
+            "extracted_receipts_summary": "API authentication rejected. The undocumented suggestion endpoint may have updated its security posture.",
+            "dma_compliance_mapping": "BLOCKED BY AUTHENTICATION FAILURE.",
+            "risk_assessment": "HIGH RISK: Incomplete audit due to authentication rejection.",
+            "security_event": False,
+            "auth_event": True,
+        }
+        event = Event(output=flagged_report)
+        event.actions.route = "security_flagged"
+        event.actions.state_delta = {
+            "redacted_categories": redacted_list,
+            "security_flagged": False,
+            "auth_flagged": True,
+        }
+        yield event
+        return
+
     if is_injection:
         # Prompt injection detected: bypass LLM, flag as security event, route directly to HITL pause
         flagged_report = {
@@ -590,6 +790,8 @@ def security_checkpoint_node(ctx: Context, node_input: dict):
 def hitl_pause_node(ctx: Context, node_input: dict):
     """Suspends the workflow and pushes the drafted report to the dashboard for review."""
     is_security_event = node_input.get("security_event", False)
+    is_rate_limit = node_input.get("rate_limit_event", False)
+    is_auth_event = node_input.get("auth_event", False)
     redacted_categories = ctx.state.get("redacted_categories", [])
     redacted_info = (
         f"\n**Redacted PII Categories**: {', '.join(redacted_categories)}"
@@ -599,12 +801,15 @@ def hitl_pause_node(ctx: Context, node_input: dict):
 
     # Check if we have received a resume input for decision
     if not ctx.resume_inputs or "decision" not in ctx.resume_inputs:
-        alert_prefix = (
-            "🚨 [SECURITY EVENT FLAGGED] " if is_security_event else "### [DRAFT] "
-        )
-        yield RequestInput(
-            interrupt_id="decision",
-            message=(
+        if is_rate_limit:
+            message = "Audit paused due to strict API rate limiting. Manual IP rotation or cooling period required."
+        elif is_auth_event:
+            message = "API authentication rejected. The undocumented suggestion endpoint may have updated its security posture."
+        else:
+            alert_prefix = (
+                "🚨 [SECURITY EVENT FLAGGED] " if is_security_event else "### [DRAFT] "
+            )
+            message = (
                 f"{alert_prefix}DMA Audit Report Ready for Review\n\n"
                 f"**Title**: {node_input.get('title')}\n\n"
                 f"**Summary**: {node_input.get('extracted_receipts_summary')}\n\n"
@@ -612,7 +817,10 @@ def hitl_pause_node(ctx: Context, node_input: dict):
                 f"**Risk**: {node_input.get('risk_assessment')}\n"
                 f"{redacted_info}\n\n"
                 f"Please review the drafted report and raw receipts. Approve, reject, or annotate with comments."
-            ),
+            )
+        yield RequestInput(
+            interrupt_id="decision",
+            message=message,
         )
         return
 
