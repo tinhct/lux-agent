@@ -314,7 +314,7 @@ LUX automatically exports tracing telemetry and logs to:
 
 ## **Future Enhancement Opportunities**
 
-* Translating legal requirements (e.g., DMA, AI Act, GDPR, DSA transparency obligations) into technical testing parameters, drafting the accountability reporting checklist, and cross-referencing findings against academic literature.
+* Translating legal requirements (e.g., DMA, AI Act, GDPR, DSA transparency obligations) into technical testing parameters, drafting the accountability reporting checklist.
 * Scaling this App to support diverse use cases across multiple digital and AI platforms.
 
 ---
