@@ -471,10 +471,11 @@ def query_dma_rag(query: str) -> dict[str, Any]:
 
 
 # Determine tools to use based on environment (local with MCP vs. cloud Agent Runtime)
+import shutil
 mcp_server_dir = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "mcp_server")
 )
-if os.path.exists(mcp_server_dir):
+if os.path.exists(mcp_server_dir) and shutil.which("uv") is not None and not os.environ.get("AGENT_RUNTIME_ID"):
     mcp_toolset = McpToolset(
         connection_params=StdioConnectionParams(
             server_params=StdioServerParameters(
@@ -787,8 +788,10 @@ def security_checkpoint_node(ctx: Context, node_input: dict):
 
 
 @node(rerun_on_resume=True)
-def hitl_pause_node(ctx: Context, node_input: dict):
+def hitl_pause_node(ctx: Context, node_input: dict | None = None):
     """Suspends the workflow and pushes the drafted report to the dashboard for review."""
+    if node_input is None:
+        node_input = {}
     is_security_event = node_input.get("security_event", False)
     is_rate_limit = node_input.get("rate_limit_event", False)
     is_auth_event = node_input.get("auth_event", False)
@@ -809,12 +812,16 @@ def hitl_pause_node(ctx: Context, node_input: dict):
             alert_prefix = (
                 "🚨 [SECURITY EVENT FLAGGED] " if is_security_event else "### [DRAFT] "
             )
+            title = node_input.get('title', 'Regulatory Audit Error')
+            summary = node_input.get('extracted_receipts_summary', 'An unexpected error occurred in the Regulatory Analyst agent.')
+            mapping = node_input.get('dma_compliance_mapping', 'No mapping available due to analysis failure.')
+            risk = node_input.get('risk_assessment', 'UNKNOWN')
             message = (
                 f"{alert_prefix}DMA Audit Report Ready for Review\n\n"
-                f"**Title**: {node_input.get('title')}\n\n"
-                f"**Summary**: {node_input.get('extracted_receipts_summary')}\n\n"
-                f"**DMA Mapping**: {node_input.get('dma_compliance_mapping')}\n\n"
-                f"**Risk**: {node_input.get('risk_assessment')}\n"
+                f"**Title**: {title}\n\n"
+                f"**Summary**: {summary}\n\n"
+                f"**DMA Mapping**: {mapping}\n\n"
+                f"**Risk**: {risk}\n"
                 f"{redacted_info}\n\n"
                 f"Please review the drafted report and raw receipts. Approve, reject, or annotate with comments."
             )
