@@ -55,37 +55,49 @@ graph TD
 
 ---
 
-## 3. Tool Execution Sequence (Local vs. Cloud)
+## 3. Tool Execution Sequences
 
-When the Gemini model decides to execute a skill, the framework routes the call dynamically based on the active profile:
+### A. Local Mode Sequence (Development & Local Testing)
+In local development, the entry point is the local playground UI or terminal CLI. Tool calls route securely via JSON-RPC to the local MCP server running as a subprocess:
 
 ```mermaid
 sequenceDiagram
     autonumber
-    actor User as Researcher Portal
-    participant Node as LLM Agent Node
-    participant ADK as ADK Framework
-    participant MCP as Local MCP Server
-    participant Native as Native Python Tool
-    participant API as External Service
+    actor User as Developer (Local Playground UI)
+    participant ADK as Local ADK Graph Runtime
+    participant MCP as Local MCP Server (Subprocess)
+    participant API as External Service (Amazon / Mock Search)
 
-    User->>Node: Input Keyword
-    Node->>ADK: Issue Tool Call JSON (fetch_amazon_brands)
-    
-    alt Local Mode (settings.use_mcp == True)
-        ADK->>MCP: JSON-RPC over stdio
-        MCP->>API: HTTP GET suggestions
-        API-->>MCP: Raw Suggestions JSON
-        MCP-->>ADK: Parse & format results
-    else Production Mode (settings.use_mcp == False)
-        ADK->>Native: Call python function directly
-        Native->>API: HTTP GET suggestions
-        API-->>Native: Raw Suggestions JSON
-        Native-->>ADK: Validate schema & map fields
-    end
+    User->>ADK: 1. Inputs keyword (e.g. Kindle)
+    ADK->>ADK: 2. Runs validate & defense nodes
+    ADK->>MCP: 3. Sends tool call JSON-RPC over stdio (fetch_amazon_brands)
+    MCP->>API: 4. Executes HTTP suggestion request
+    API-->>MCP: 5. Returns suggestion payload JSON
+    MCP-->>ADK: 6. Returns structured results
+    ADK->>User: 7. Renders output in local playground
+```
 
-    ADK->>Node: Return formatted tool output
-    Node->>User: Yield final report predictions
+### B. Production Mode Sequence (Deployed Cloud Environment)
+In production, the entry point is the user-facing Researcher Portal. The portal initiates a session, and the deployed Vertex AI Reasoning Engine executes the graph nodes and calls tools directly as native Python functions:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User as Researcher (Web Portal Dashboard)
+    participant Portal as Researcher Portal Service
+    participant Engine as Vertex AI Reasoning Engine (Agent Runtime)
+    participant Tool as Native Python Tool (amazon_brands.py / dma_rag.py)
+    participant API as External Service (Amazon API / Vertex RAG Search)
+
+    User->>Portal: 1. Inputs keyword
+    Portal->>Engine: 2. Starts/Resumes Session (VertexAiSessionService)
+    Engine->>Engine: 3. Runs graph validation & defense nodes
+    Engine->>Tool: 4. Invokes Python function directly
+    Tool->>API: 5. Sends API request (HTTPS suggestions / Discovery Engine client)
+    API-->>Tool: 6. Returns results payload
+    Tool-->>Engine: 7. Returns validated python dict
+    Engine-->>Portal: 8. Streams workflow events & audit records
+    Portal->>User: 9. Displays finalized compliance report
 ```
 
 ---
