@@ -372,6 +372,7 @@ LUX automatically exports tracing telemetry and logs to:
 
 ## **Future Enhancement Opportunities**
 
+* Adding more Agent Skills for other algorithmic and regulatory audits.
 * Translating legal requirements (e.g., DMA, AI Act, GDPR, DSA transparency obligations) into technical testing parameters, drafting the accountability reporting checklist.
 * Scaling this App to support diverse use cases across multiple digital and AI platforms.
 
