@@ -94,7 +94,7 @@ graph TD
 
 ---
 
-## **Project Repository Structure**
+### **Project Repository Structure**
 
 ```
 lux-agent/
@@ -106,25 +106,33 @@ lux-agent/
 │           ├── SKILL.md       # Skill definition and semantic search parameters
 │           └── references/    # RAG citation guidelines & edge-case rules
 ├── app/                       # Core agent engine nodes & graph
-│   ├── agent.py               # Main workflow definition, LLM agents, and nodes
-│   ├── agent_runtime_app.py   # ADK Reasoning Engine setup wrapper
+│   ├── agent.py               # Workflow factory and entry point definitions
+│   ├── agent_runtime_app.py   # ADK Reasoning Engine setup and clone wrapper
+│   ├── fast_api_app.py        # Local playground API transport wrapper
+│   ├── core/                  # Decomposed business logic & configurations
+│   │   ├── config.py          # Stateless settings management
+│   │   ├── persistence.py     # Concurrency-safe GCS/local audit persistence
+│   │   ├── security.py        # Prompt-injection validation & PII redaction
+│   │   ├── validation.py      # Input query validation
+│   │   └── adapters/
+│   │       └── pubsub.py      # Starlette request payload pubsub adapters
+│   ├── tools/                 # Native tool Python implementations
+│   │   ├── amazon_brands.py   # Search suggestions and brand classifiers
+│   │   └── dma_rag.py         # DMA compliance Discovery Engine RAG tool
 │   └── app_utils/             # Shared helpers, telemetry, and custom types
 ├── artifacts/                 # Evaluator logs and telemetry traces
-│   ├── traces/                # Raw traces from agents evaluation
-│   └── grade_results/         # Graded evaluation metrics and dashboards
 ├── deployment/                # IaC scripts for cloud deployment
-│   └── terraform/             # Terraform configuration files (single project, CI/CD)
 ├── frontend/                  # Web dashboard (Researcher Portal)
 │   ├── main.py                # FastAPI portal dashboard
+│   ├── config.py              # Portal environmental configurations
 │   ├── Dockerfile             # Container configuration for portal deployment
 │   └── README.md              # Dashboard launch manual
 ├── mcp_server/                # Local Model Context Protocol server
-│   ├── server.py              # Sandbox tool endpoints (Amazon suggestions, Vector Search RAG)
-│   └── pyproject.toml         # Sandbox dependencies
 ├── tests/                     # Test harness (unit, integration, and mocks)
-│   ├── conftest.py            # Global test fixtures (RAG client mocks)
-│   ├── unit/                  # Unit tests
+│   ├── conftest.py            # Global test fixtures
+│   ├── unit/                  # Unit tests (config, persistence, pubsub, api)
 │   └── integration/           # Integration tests (Reasoning Engine stream tests)
+├── BACKLOG.md                 # Product backlog & roadmap
 ├── GEMINI.md                  # Development flywheel guide
 ├── agents-cli-manifest.yaml   # ADK workspace configuration manifest
 └── pyproject.toml             # Project dependency configuration
@@ -225,21 +233,25 @@ When deployed to Google Cloud (Vertex AI Reasoning Engine / Agent Runtime), the 
 
 The project employs a **three-tier testing strategy** spanning unit tests, integration tests, and agentic evaluations:
 
-* **14 unit tests** (`tests/unit/test_dummy.py`) covering input validation across 6 security categories:
-  * ✅ Happy-path acceptance (`"Kindle"`, `"AA batteries"`, `"smart-watch"`, `"men's shoes"`)
-  * 🛡 Input sanitization (type checking, empty/whitespace rejection)
-  * 📏 Length boundaries (min 2 chars, max 50 chars)
-  * 🔐 Security — character allowlist/blocklist, 11 illegal characters (`< > { } [ ] \ / ; = *`), and anti-prompt-injection signatures (`"ignore instructions"`, `"bypass system"`, `"system prompt"`, `"print rules"`)
-  * 🏷 Domain logic — ASIN rejection (`B08QF1V9T2`), URL rejection (`www.amazon.co.uk`, `amazon.com`)
-  * 🛡 Ethical — PII blocking (email, phone, SSN) and NSFW/harmful content filtering
-  * 🔧 3 regression tests for `GOOGLE_CLOUD_LOCATION` derivation from `AGENT_RUNTIME_ID`
+* **29 unit tests** spanning multiple targeting domains:
+  * **13 validation tests** ([tests/unit/test_dummy.py](file:///Users/tinhct/Documents/AI%20PM%20Knowledge/5%20Day%20AI%20Agents%20/capstone-project/lux-agent/tests/unit/test_dummy.py)) covering input validation across 6 security categories:
+    * ✅ Happy-path acceptance (`"Kindle"`, `"AA batteries"`, `"smart-watch"`, `"men's shoes"`)
+    * 🛡 Input sanitization (type checking, empty/whitespace rejection)
+    * 📏 Length boundaries (min 2 chars, max 50 chars)
+    * 🔐 Security — character allowlist/blocklist, 11 illegal characters (`< > { } [ ] \ / ; = *`), and anti-prompt-injection signatures (`"ignore instructions"`, `"bypass system"`, `"system prompt"`, `"print rules"`)
+    * 🏷 Domain logic — ASIN rejection (`B08QF1V9T2`), URL rejection (`www.amazon.co.uk`, `amazon.com`)
+    * 🛡 Ethical — PII blocking (email, phone, SSN) and NSFW/harmful content filtering
+  * **6 Amazon suggestion tests** ([tests/unit/test_amazon_api.py](file:///Users/tinhct/Documents/AI%20PM%20Knowledge/5%20Day%20AI%20Agents%20/capstone-project/lux-agent/tests/unit/test_amazon_api.py)) covering error handles, retries, and fallbacks.
+  * **3 configuration tests** ([tests/unit/test_config.py](file:///Users/tinhct/Documents/AI%20PM%20Knowledge/5%20Day%20AI%20Agents%20/capstone-project/lux-agent/tests/unit/test_config.py)) validating environment variables and locations.
+  * **4 persistence repository tests** ([tests/unit/test_persistence.py](file:///Users/tinhct/Documents/AI%20PM%20Knowledge/5%20Day%20AI%20Agents%20/capstone-project/lux-agent/tests/unit/test_persistence.py)) asserting GCS and local db operations.
+  * **3 pubsub adapter tests** ([tests/unit/test_pubsub_adapter.py](file:///Users/tinhct/Documents/AI%20PM%20Knowledge/5%20Day%20AI%20Agents%20/capstone-project/lux-agent/tests/unit/test_pubsub_adapter.py)) validating payload path parsers.
 
-* **3 integration tests** (`tests/integration/`):
+* **3 integration tests** ([tests/integration/](file:///Users/tinhct/Documents/AI%20PM%20Knowledge/5%20Day%20AI%20Agents%20/capstone-project/lux-agent/tests/integration/)):
   * `test_agent_stream` — Full ADK `Runner` with SSE streaming for `"Please audit the keyword: batteries"`
-  * `test_agent_stream_query` — `AgentEngineApp.async_stream_query` with Pydantic `Event` schema validation
-  * `test_agent_feedback` — `register_feedback` accepts valid feedback (`score=5`) and rejects invalid input (`score="invalid"`)
+  * `test_agent_stream_query` — `AgentEngineApp.async_stream_query` running cloned isolated replicas
+  * `test_agent_feedback` — `register_feedback` validation logs
 
-* **Test infrastructure** (`tests/conftest.py`): Auto-mock fixture patches `discoveryengine_v1.SearchServiceClient` across all tests, enabling fully offline execution without GCP credentials.
+* **Test infrastructure** ([tests/conftest.py](file:///Users/tinhct/Documents/AI%20PM%20Knowledge/5%20Day%20AI%20Agents%20/capstone-project/lux-agent/tests/conftest.py)): patches `discoveryengine_v1.SearchServiceClient` across all tests for offline safety.
 
 * **3 custom agentic eval metrics** (`tests/eval/eval_config.yaml`) — deterministic Python scorers (not LLM-as-judge):
 

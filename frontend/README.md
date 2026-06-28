@@ -23,3 +23,11 @@ To launch the dashboard locally:
     ```
 
 3.  Open [http://localhost:8081](http://localhost:8081) in your browser.
+
+## Configuration
+
+The portal resolves settings via environment variables (which can also be placed in a root `.env` file):
+*   `GOOGLE_CLOUD_PROJECT`: The Google Cloud Project ID.
+*   `AGENT_RUNTIME_ID`: The full resource name of the deployed Vertex AI Reasoning Engine (e.g., `projects/{project}/locations/{location}/reasoningEngines/{id}`).
+*   `ALLOW_ORIGINS`: Comma-separated list of allowed CORS origins. Defaults to `http://localhost:8080,http://localhost:8081` to keep the trust boundaries closed.
+
