@@ -74,6 +74,57 @@ graph TD
     FR -->|14. Result Return| User
 ```
 
+## **Tool Execution Sequences**
+
+The tool connection and call flows differ between local development and deployed cloud environments.
+
+### 1. Local Mode Sequence (Development & Local Testing)
+In local development, the entry point is the local playground UI or terminal CLI. Tool calls route securely via JSON-RPC to the local MCP server running as a subprocess:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User as Developer (Local Playground UI)
+    participant ADK as Local ADK Graph Runtime
+    participant MCP as Local MCP Server (Subprocess)
+    participant API as External Service (Amazon / Mock Search)
+
+    User->>ADK: 1. Inputs keyword (e.g. Kindle)
+    ADK->>ADK: 2. Runs validate & defense nodes
+    ADK->>MCP: 3. Sends tool call JSON-RPC over stdio (fetch_amazon_brands)
+    MCP->>API: 4. Executes HTTP suggestion request
+    API-->>MCP: 5. Returns suggestion payload JSON
+    MCP-->>ADK: 6. Returns structured results
+    ADK->>User: 7. Renders output in local playground
+```
+
+---
+
+### 2. Production Mode Sequence (Deployed Cloud Environment)
+In production, the entry point is the user-facing Researcher Portal. The portal initiates a session, and the deployed Vertex AI Reasoning Engine executes the graph nodes and calls tools directly as native Python functions:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User as Researcher (Web Portal Dashboard)
+    participant Portal as Researcher Portal Service
+    participant Engine as Vertex AI Reasoning Engine (Agent Runtime)
+    participant Tool as Native Python Tool (amazon_brands.py / dma_rag.py)
+    participant API as External Service (Amazon API / Vertex RAG Search)
+
+    User->>Portal: 1. Inputs keyword
+    Portal->>Engine: 2. Starts/Resumes Session (VertexAiSessionService)
+    Engine->>Engine: 3. Runs graph validation & defense nodes
+    Engine->>Tool: 4. Invokes Python function directly
+    Tool->>API: 5. Sends API request (HTTPS suggestions / Discovery Engine client)
+    API-->>Tool: 6. Returns results payload
+    Tool-->>Engine: 7. Returns validated python dict
+    Engine-->>Portal: 8. Streams workflow events & audit records
+    Portal->>User: 9. Displays finalized compliance report
+```
+
+---
+
 ### **Tech Stack**
 
 * **Workflow Engine:** Google ADK (Stateful graph API).  
@@ -123,6 +174,8 @@ lux-agent/
 │   └── app_utils/             # Shared helpers, telemetry, and custom types
 ├── artifacts/                 # Evaluator logs and telemetry traces
 ├── deployment/                # IaC scripts for cloud deployment
+├── docs/                      # Technical guides & documentation
+│   └── technical_know_how.md  # Orchestration, sequence and reference guide
 ├── frontend/                  # Web dashboard (Researcher Portal)
 │   ├── main.py                # FastAPI portal dashboard
 │   ├── config.py              # Portal environmental configurations
@@ -199,7 +252,6 @@ agents-cli deploy
 ## **Testing Notes**
 
 ### 1. Local Test Transaction Flow (via Local Playground UI)
-
 In the local development environment, the agent communicates with the tools via the Model Context Protocol (MCP).
 
 * **Server Process / Command**: The playground launches the MCP server locally as a subprocess using:
@@ -208,23 +260,16 @@ In the local development environment, the agent communicates with the tools via 
   ```
 * **Endpoint / Protocol**: There is no HTTP endpoint or port. The local agent communicates with the MCP server using JSON-RPC over standard input/output (stdio).
 * **Underlying Services Called by the Local MCP Server**:
-  * `fetch_amazon_brands`: Queries the public Amazon API endpoint:
-    `https://completion.amazon.com/api/2017/suggestions`
-  * `query_dma_rag`: If Google Cloud credentials and Vertex AI Search environment variables (`VERTEX_AI_SEARCH_PROJECT_ID`, etc.) are configured, it queries the GCP Discovery Engine API. If missing, it runs a local in-memory simulation (keyword matching mock chunks) directly in Python.
+  * `fetch_amazon_brands`: Queries the public Amazon API endpoint: `https://completion.amazon.com/api/2017/suggestions`
+  * `query_dma_rag`: If Google Cloud credentials and Vertex AI Search environment variables are configured, it queries the GCP Discovery Engine API. If missing, it runs a local in-memory simulation directly in Python.
 
 ### 2. Deployed (Cloud) Transaction Flow (via Researcher Portal)
-
 When deployed to Google Cloud (Vertex AI Reasoning Engine / Agent Runtime), the local `mcp_server` folder does not exist. The agent code dynamically detects this and falls back to running the tools as native Python functions defined inside `app/agent.py`.
 
-* **`fetch_amazon_brands` Endpoint**:
-  * Directly makes an HTTP GET request to the Amazon completion endpoint:
-    `https://completion.amazon.com/api/2017/suggestions`
-* **`query_dma_rag` Endpoint**:
-  * Calls the Vertex AI Search (Discovery Engine) API via the Google Cloud Client Library:
-    `discoveryengine.SearchServiceClient()`
-  * The serving configuration path queried is:
-    `projects/{project_id}/locations/{location}/collections/default_collection/dataStores/{data_store_id}/servingConfigs/default_search`
-  * If Vertex AI Search configuration parameters are not set, it executes the local in-memory simulation.
+* **`fetch_amazon_brands` Endpoint**: Directly makes an HTTP GET request to `https://completion.amazon.com/api/2017/suggestions`.
+* **`query_dma_rag` Endpoint**: Calls the Vertex AI Search (Discovery Engine) API via the Google Cloud Client Library (`discoveryengine.SearchServiceClient()`) pointing to:
+  `projects/{project_id}/locations/{location}/collections/default_collection/dataStores/{data_store_id}/servingConfigs/default_search`
+  If unconfigured, it runs a local in-memory simulation.
 
 ---
 
