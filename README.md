@@ -101,7 +101,8 @@ lux-agent/
 ├── .agents/                   # Workspace customizations and skills
 │   └── skills/
 │       ├── fetch_amazon_brands/ # Skill for auditing Amazon private labels
-│       │   └── SKILL.md       # Skill definition for Amazon API extraction
+│       │   ├── SKILL.md       # Skill definition for Amazon API extraction
+│       │   └── references/    # Amazon suggestion API rules & specifications
 │       └── query_dma_rag/     # Skill for querying DMA gatekeeper rules
 │           ├── SKILL.md       # Skill definition and semantic search parameters
 │           └── references/    # RAG citation guidelines & edge-case rules
