@@ -1,3 +1,18 @@
+# Release Notes - LUX Agent v1.3.0
+
+## Features & Improvements
+
+### Refactoring Backlog Implementation
+* **Stateless & Explicit App Construction**: Refactored `app/core/config.py` to move environment variables loading and dotenv resolving inside `load_settings()`. Created dynamic factory functions `create_workflow` and `create_app` in `app/agent.py`, removing all import-time side-effects and singleton state.
+* **Isolated Runtime Replicas**: Fixed the runtime cloning boundary in `app/agent_runtime_app.py` by implementing a real `clone()` factory that returns a separate, clean instance of `AgentEngineApp` using the stateless factory.
+* **GCS Production Storage Adapter**: Implemented `GcsAuditRepository` inside `app/core/persistence.py`, enabling safe, concurrency-proof writes directly to Google Cloud Storage (GCS) in production while preserving local JSON for local dev.
+* **Transport-Decoupled Middleware**: Moved Starlette request stream body rewriting middleware completely out of `app/fast_api_app.py` to `app/core/adapters/pubsub.py`, making FastAPI transport purely thin.
+* **Dashboard Bootstrap & CORS Hardening**: Extracted duplicate metadata/config lookups from `frontend/main.py` into a new `frontend/config.py` helper. Restructured CORS posture to use configurable settings allowed origins, dropping the permissive default wildcard `*`.
+* **Toolchain Alignment**: Synchronized the static type checker `ty` Python environment target in `pyproject.toml` to Python `3.12`.
+* **Testing Expansion**: Added unit tests for the dynamic GCS repository, repository routing factory, and cloned replica isolation, verifying all 32 tests in the suite pass.
+
+---
+
 # Release Notes - LUX Agent v1.2.0
 
 ## Features & Improvements

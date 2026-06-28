@@ -17,7 +17,10 @@ from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
 from google.genai import types
 
-from app.agent import root_agent
+from app.agent import create_workflow
+from app.core.config import load_settings
+
+root_agent = create_workflow(load_settings())
 
 
 def test_agent_stream(mock_vertex_search) -> None:

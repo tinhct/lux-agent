@@ -20,13 +20,14 @@ from google.adk.artifacts import GcsArtifactService, InMemoryArtifactService
 from google.cloud import logging as google_cloud_logging
 from vertexai.agent_engines.templates.adk import AdkApp
 
-from app.agent import app as adk_app
+from app.agent import create_app
 from app.app_utils.telemetry import setup_telemetry
 from app.app_utils.typing import Feedback
-from app.core.config import get_settings
+from app.core.config import load_settings
 
-# Initialize settings
-settings = get_settings()
+# Initialize settings dynamically
+settings = load_settings()
+adk_app = create_app(settings)
 
 
 class AgentEngineApp(AdkApp):
@@ -54,7 +55,12 @@ class AgentEngineApp(AdkApp):
 
     def clone(self) -> "AgentEngineApp":
         """Returns a clone of the Agent Runtime application."""
-        return self
+        clone_settings = load_settings()
+        clone_adk_app = create_app(clone_settings)
+        return AgentEngineApp(
+            app=clone_adk_app,
+            artifact_service_builder=self._tmpl_attrs.get("artifact_service_builder"),
+        )
 
 
 gemini_location = settings.resolved_location

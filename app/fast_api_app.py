@@ -11,25 +11,24 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import json
+
 import logging
 import os
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from google.adk.cli.fast_api import get_fast_api_app
-from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.app_utils.telemetry import setup_telemetry
 from app.app_utils.typing import Feedback
-from app.core.config import get_settings
-from app.core.adapters.pubsub import normalize_pubsub_payload
+from app.core.config import load_settings
+from app.core.adapters.pubsub import NormalizePubSubSubscriptionMiddleware
 
 # Setup standard Python logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Initialize settings
-settings = get_settings()
+# Initialize settings dynamically
+settings = load_settings()
 
 setup_telemetry()
 
@@ -53,36 +52,6 @@ app: FastAPI = get_fast_api_app(
 )
 app.title = "lux-agent"
 app.description = "API for interacting with the Agent lux-agent"
-
-
-class NormalizePubSubSubscriptionMiddleware(BaseHTTPMiddleware):
-    """Middleware to normalize Pub/Sub subscription path to keep session IDs clean."""
-
-    async def dispatch(self, request: Request, call_next):
-        if "/trigger/pubsub" in request.url.path and request.method == "POST":
-            try:
-                body = await request.json()
-                normalized_body = normalize_pubsub_payload(body)
-                if normalized_body is not body:
-                    modified_body = json.dumps(normalized_body).encode("utf-8")
-
-                    # Explicitly set Starlette cached body and json
-                    request._body = modified_body
-                    request._json = normalized_body
-
-                    async def receive():
-                        return {
-                            "type": "http.request",
-                            "body": modified_body,
-                            "more_body": False,
-                        }
-
-                    request._receive = receive
-            except Exception as e:
-                logger.warning("Failed to normalize subscription body: %s", e)
-
-        return await call_next(request)
-
 
 # Add the normalization middleware to the app
 app.add_middleware(NormalizePubSubSubscriptionMiddleware)

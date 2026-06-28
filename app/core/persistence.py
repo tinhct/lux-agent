@@ -14,8 +14,14 @@
 
 from abc import ABC, abstractmethod
 import json
+import logging
 import os
-from typing import Any, List
+import random
+import time
+from typing import Any, List, Optional
+from google.cloud import storage
+
+logger = logging.getLogger(__name__)
 
 
 class AuditRepository(ABC):
@@ -28,7 +34,7 @@ class AuditRepository(ABC):
 
     @abstractmethod
     def get_next_id(self) -> int:
-        """Returns the next auto-incrementing ID for a new record."""
+        """Returns the next ID for a new record."""
         pass
 
 
@@ -64,6 +70,47 @@ class LocalFileAuditRepository(AuditRepository):
             return f"Failed to save to database: {e}"
 
 
-def get_audit_repository() -> AuditRepository:
-    """Factory function returning the configured repository implementation."""
+class GcsAuditRepository(AuditRepository):
+    """Concrete repository implementing Google Cloud Storage audit logs."""
+
+    def __init__(self, bucket_name: str, prefix: str = "audit_logs"):
+        self.bucket_name = bucket_name
+        self.prefix = prefix
+        self._client = None
+
+    @property
+    def client(self):
+        if self._client is None:
+            self._client = storage.Client()
+        return self._client
+
+    def get_next_id(self) -> int:
+        # Generate a unique, monotonic, positive 31-bit integer
+        ms = int(time.time() * 1000) & 0x7fffffff
+        return (ms + random.randint(0, 1000)) & 0x7fffffff
+
+    def append_record(self, record: dict[str, Any]) -> str:
+        try:
+            bucket = self.client.bucket(self.bucket_name)
+            filename = f"{self.prefix}/audit_{record['id']}_{record['timestamp']}.json"
+            blob = bucket.blob(filename)
+            blob.upload_from_string(
+                json.dumps(record, indent=2), content_type="application/json"
+            )
+            logger.info("Audit record saved to GCS: gs://%s/%s", self.bucket_name, filename)
+            return f"Saved to GCS bucket '{self.bucket_name}' successfully."
+        except Exception as e:
+            logger.error("Failed to save audit record to GCS: %s", e)
+            return f"Failed to save to GCS: {e}"
+
+
+def get_audit_repository(settings: Optional[Any] = None) -> AuditRepository:
+    """Factory function returning the repository implementation based on environment settings."""
+    if settings is None:
+        from app.core.config import get_settings
+        settings = get_settings()
+
+    if settings.logs_bucket_name:
+        return GcsAuditRepository(bucket_name=settings.logs_bucket_name)
+
     return LocalFileAuditRepository()

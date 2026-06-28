@@ -50,3 +50,49 @@ def test_persistence_append_record(temp_db_file):
     assert len(data) == 2
     assert data[0] == record_1
     assert data[1] == record_2
+
+
+from unittest.mock import MagicMock
+from app.core.persistence import GcsAuditRepository, get_audit_repository
+from app.core.config import Settings
+
+def test_gcs_persistence_append_record(monkeypatch):
+    """Verify GcsAuditRepository builds client and uploads JSON strings to bucket."""
+    mock_storage_client = MagicMock()
+    mock_bucket = MagicMock()
+    mock_blob = MagicMock()
+
+    mock_storage_client.bucket.return_value = mock_bucket
+    mock_bucket.blob.return_value = mock_blob
+
+    # Patch the storage.Client constructor
+    monkeypatch.setattr("google.cloud.storage.Client", lambda: mock_storage_client)
+
+    repo = GcsAuditRepository(bucket_name="test-bucket")
+    
+    # Check ID generation works
+    next_id = repo.get_next_id()
+    assert isinstance(next_id, int)
+    assert next_id > 0
+
+    record = {"id": next_id, "timestamp": "2026-06-28", "data": "value"}
+    status = repo.append_record(record)
+
+    assert "test-bucket" in status
+    mock_storage_client.bucket.assert_called_once_with("test-bucket")
+    mock_bucket.blob.assert_called_once()
+    mock_blob.upload_from_string.assert_called_once()
+
+
+def test_get_audit_repository_factory():
+    """Verify factory returns correct repository based on settings."""
+    # 1. No logs bucket name -> LocalFileAuditRepository
+    settings_local = Settings(logs_bucket_name=None)
+    repo_local = get_audit_repository(settings_local)
+    assert isinstance(repo_local, LocalFileAuditRepository)
+
+    # 2. Has logs bucket name -> GcsAuditRepository
+    settings_gcs = Settings(logs_bucket_name="my-gcs-bucket")
+    repo_gcs = get_audit_repository(settings_gcs)
+    assert isinstance(repo_gcs, GcsAuditRepository)
+    assert repo_gcs.bucket_name == "my-gcs-bucket"

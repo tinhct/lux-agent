@@ -12,8 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
 import logging
-from typing import Any, Dict
+from typing import Any
+from fastapi import Request
+from starlette.middleware.base import BaseHTTPMiddleware
 
 logger = logging.getLogger(__name__)
 
@@ -40,3 +43,32 @@ def normalize_pubsub_payload(body: Any) -> Any:
         return normalized
 
     return body
+
+
+class NormalizePubSubSubscriptionMiddleware(BaseHTTPMiddleware):
+    """Middleware to normalize Pub/Sub subscription path to keep session IDs clean."""
+
+    async def dispatch(self, request: Request, call_next):
+        if "/trigger/pubsub" in request.url.path and request.method == "POST":
+            try:
+                body = await request.json()
+                normalized_body = normalize_pubsub_payload(body)
+                if normalized_body is not body:
+                    modified_body = json.dumps(normalized_body).encode("utf-8")
+
+                    # Explicitly set Starlette cached body and json
+                    request._body = modified_body
+                    request._json = normalized_body
+
+                    async def receive():
+                        return {
+                            "type": "http.request",
+                            "body": modified_body,
+                            "more_body": False,
+                        }
+
+                    request._receive = receive
+            except Exception as e:
+                logger.warning("Failed to normalize subscription body: %s", e)
+
+        return await call_next(request)

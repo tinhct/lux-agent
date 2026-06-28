@@ -44,9 +44,7 @@ from mcp import StdioServerParameters
 from google.genai import types
 from pydantic import BaseModel, Field
 
-from app.core.config import get_settings
-# Initialize configuration settings
-settings = get_settings()
+from app.core.config import get_settings, load_settings, Settings
 from app.core.persistence import get_audit_repository
 
 from app.core.validation import validate_keyword
@@ -59,27 +57,7 @@ from app.tools.amazon_brands import (
 from app.tools.dma_rag import query_dma_rag
 
 
-# Determine tools to use based on environment (local with MCP vs. cloud Agent Runtime)
-if settings.use_mcp:
-    mcp_toolset = McpToolset(
-        connection_params=StdioConnectionParams(
-            server_params=StdioServerParameters(
-                command="uv",
-                args=[
-                    "run",
-                    "--project",
-                    "mcp_server",
-                    "python",
-                    "mcp_server/server.py",
-                ],
-            )
-        )
-    )
-    api_inspector_tools = [mcp_toolset]
-    regulatory_analyst_tools = [mcp_toolset]
-else:
-    api_inspector_tools = [fetch_amazon_brands]
-    regulatory_analyst_tools = [query_dma_rag]
+# Tools are resolved dynamically inside the create_workflow factory function
 
 
 class SuggestionItem(BaseModel):
@@ -133,27 +111,7 @@ class APIInspectorOutput(BaseModel):
     status_code: int | None = Field(default=200, description="The HTTP status code returned by the API")
 
 
-api_inspector_node = LlmAgent(
-    name="api_inspector",
-    model=Gemini(
-        model="gemini-flash-latest",
-        retry_options=types.HttpRetryOptions(attempts=3),
-    ),
-    instruction=(
-        "You are the API Inspector agent. Your sole responsibility is to fetch search suggestions "
-        "and private-label brand data for the given keyword query. You must execute this retrieval "
-        "strictly through the fetch_amazon_brands tool. "
-        "Format the suggestions extracted from the tool exactly according to the output schema. "
-        "You must map the suggestions list to the raw_results list as structured JSON objects (not JSON strings), "
-        "where each object has 'value' and 'brand_type' as direct keys. For example: "
-        '{"value": "aa batteries", "brand_type": "third_party"}. '
-        "If the tool returns an error_log or status_code, you must copy the error_log and status_code "
-        "exactly to the output schema fields. "
-        "Do NOT output string representations of JSON."
-    ),
-    tools=api_inspector_tools,
-    output_schema=APIInspectorOutput,
-)
+# api_inspector node instantiated dynamically inside create_workflow
 
 
 from app.core.security import sanitize_text
@@ -204,26 +162,7 @@ class RegulatoryReport(BaseModel):
     )
 
 
-regulatory_analyst_node = LlmAgent(
-    name="regulatory_analyst",
-    model=Gemini(
-        model="gemini-flash-latest",
-        retry_options=types.HttpRetryOptions(attempts=3),
-    ),
-    instruction=(
-        "You are a Regulatory Analyst specializing in the Digital Markets Act (DMA). "
-        "Your task is to analyze the raw receipts (JSON data) provided in the input, "
-        "summarize the findings, map them to relevant DMA articles, and provide an overall risk assessment.\n\n"
-        "Crucially, you must cross-reference findings and query definitions of terms (such as self-preferencing or core platform services) "
-        "strictly by calling the query_dma_rag tool, ensuring this execution routes through the local Model Context Protocol (MCP) container. "
-        "Do not extrapolate or rely on external or pre-trained knowledge of EU antitrust regulation; use only direct quotes from the retrieved chunks. "
-        "Cite the specific Article and Paragraph for every legal claim. "
-        "Always append the mandatory disclaimer at the end of the report: "
-        "'***Disclaimer: This analysis is generated via automated regulatory mapping for research purposes only. It does not constitute binding legal counsel, and findings must be verified by a qualified human legal professional.***'"
-    ),
-    tools=regulatory_analyst_tools,
-    output_schema=RegulatoryReport,
-)
+# regulatory_analyst node instantiated dynamically inside create_workflow
 
 
 from app.core.security import scrub_and_detect
@@ -371,7 +310,8 @@ def finalize_report_node(ctx: Context, node_input: dict):
     notes = node_input["notes"]
     report = node_input["report"]
 
-    repo = get_audit_repository()
+    settings = get_settings()
+    repo = get_audit_repository(settings)
     next_id = repo.get_next_id()
 
     # Prepare audit record
@@ -409,29 +349,100 @@ def finalize_report_node(ctx: Context, node_input: dict):
     yield Event(output=audit_record)
 
 
-root_agent = Workflow(
-    name="lux_audit_graph",
-    edges=[
-        Edge(from_node=START, to_node=validate_prompt_node),
-        Edge(from_node=validate_prompt_node, to_node=api_inspector_node),
-        Edge(from_node=api_inspector_node, to_node=defense_middleware_node),
-        Edge(from_node=defense_middleware_node, to_node=security_checkpoint_node),
-        Edge(
-            from_node=security_checkpoint_node,
-            to_node=regulatory_analyst_node,
-            route="safe",
-        ),
-        Edge(
-            from_node=security_checkpoint_node,
-            to_node=hitl_pause_node,
-            route="security_flagged",
-        ),
-        Edge(from_node=regulatory_analyst_node, to_node=hitl_pause_node),
-        Edge(from_node=hitl_pause_node, to_node=finalize_report_node),
-    ],
-)
+def create_workflow(settings: Settings) -> Workflow:
+    """Stateless factory to build the agent workflow graph."""
+    if settings.use_mcp:
+        mcp_toolset = McpToolset(
+            connection_params=StdioConnectionParams(
+                server_params=StdioServerParameters(
+                    command="uv",
+                    args=[
+                        "run",
+                        "--project",
+                        "mcp_server",
+                        "python",
+                        "mcp_server/server.py",
+                    ],
+                )
+            )
+        )
+        api_inspector_tools = [mcp_toolset]
+        regulatory_analyst_tools = [mcp_toolset]
+    else:
+        api_inspector_tools = [fetch_amazon_brands]
+        regulatory_analyst_tools = [query_dma_rag]
 
-app = App(
-    root_agent=root_agent,
-    name="app",
-)
+    api_inspector_node = LlmAgent(
+        name="api_inspector",
+        model=Gemini(
+            model="gemini-flash-latest",
+            retry_options=types.HttpRetryOptions(attempts=3),
+        ),
+        instruction=(
+            "You are the API Inspector agent. Your sole responsibility is to fetch search suggestions "
+            "and private-label brand data for the given keyword query. You must execute this retrieval "
+            "strictly through the fetch_amazon_brands tool. "
+            "Format the suggestions extracted from the tool exactly according to the output schema. "
+            "You must map the suggestions list to the raw_results list as structured JSON objects (not JSON strings), "
+            "where each object has 'value' and 'brand_type' as direct keys. For example: "
+            '{"value": "aa batteries", "brand_type": "third_party"}. '
+            "If the tool returns an error_log or status_code, you must copy the error_log and status_code "
+            "exactly to the output schema fields. "
+            "Do NOT output string representations of JSON."
+        ),
+        tools=api_inspector_tools,
+        output_schema=APIInspectorOutput,
+    )
+
+    regulatory_analyst_node = LlmAgent(
+        name="regulatory_analyst",
+        model=Gemini(
+            model="gemini-flash-latest",
+            retry_options=types.HttpRetryOptions(attempts=3),
+        ),
+        instruction=(
+            "You are a Regulatory Analyst specializing in the Digital Markets Act (DMA). "
+            "Your task is to analyze the raw receipts (JSON data) provided in the input, "
+            "summarize the findings, map them to relevant DMA articles, and provide an overall risk assessment.\n\n"
+            "Crucially, you must cross-reference findings and query definitions of terms (such as self-preferencing or core platform services) "
+            "strictly by calling the query_dma_rag tool, ensuring this execution routes through the local Model Context Protocol (MCP) container. "
+            "Do not extrapolate or rely on external or pre-trained knowledge of EU antitrust regulation; use only direct quotes from the retrieved chunks. "
+            "Cite the specific Article and Paragraph for every legal claim. "
+            "Always append the mandatory disclaimer at the end of the report: "
+            "'***Disclaimer: This analysis is generated via automated regulatory mapping for research purposes only. It does not constitute binding legal counsel, and findings must be verified by a qualified human legal professional.***'"
+        ),
+        tools=regulatory_analyst_tools,
+        output_schema=RegulatoryReport,
+    )
+
+    return Workflow(
+        name="lux_audit_graph",
+        edges=[
+            Edge(from_node=START, to_node=validate_prompt_node),
+            Edge(from_node=validate_prompt_node, to_node=api_inspector_node),
+            Edge(from_node=api_inspector_node, to_node=defense_middleware_node),
+            Edge(from_node=defense_middleware_node, to_node=security_checkpoint_node),
+            Edge(
+                from_node=security_checkpoint_node,
+                to_node=regulatory_analyst_node,
+                route="safe",
+            ),
+            Edge(
+                from_node=security_checkpoint_node,
+                to_node=hitl_pause_node,
+                route="security_flagged",
+            ),
+            Edge(from_node=regulatory_analyst_node, to_node=hitl_pause_node),
+            Edge(from_node=hitl_pause_node, to_node=finalize_report_node),
+        ],
+    )
+
+
+def create_app(settings: Settings) -> App:
+    """Stateless factory to build the ADK App."""
+    wf = create_workflow(settings)
+    return App(root_agent=wf, name="app")
+
+
+# Fallback default app for import-time command line tool auto-discovery
+app = create_app(load_settings())

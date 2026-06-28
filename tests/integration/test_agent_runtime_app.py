@@ -28,8 +28,9 @@ def agent_app(monkeypatch: pytest.MonkeyPatch) -> AgentEngineApp:
 
     from app.agent_runtime_app import agent_runtime
 
-    agent_runtime.set_up()
-    return agent_runtime
+    cloned_app = agent_runtime.clone()
+    cloned_app.set_up()
+    return cloned_app
 
 
 @pytest.mark.asyncio

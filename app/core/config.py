@@ -18,10 +18,6 @@ from typing import List, Optional
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
 
-# Ensure environment variables are loaded
-load_dotenv()
-
-
 class Settings(BaseModel):
     gemini_api_key: Optional[str] = Field(default_factory=lambda: os.environ.get("GEMINI_API_KEY"))
     google_cloud_project: Optional[str] = Field(default_factory=lambda: os.environ.get("GOOGLE_CLOUD_PROJECT"))
@@ -64,35 +60,36 @@ class Settings(BaseModel):
         )
 
 
-_settings: Optional[Settings] = None
+def load_settings() -> Settings:
+    """Loads and resolves settings from environment variables on-demand."""
+    load_dotenv()
+
+    # Set up default credentials & project if not already in env
+    if not os.environ.get("GEMINI_API_KEY") and not os.environ.get("GOOGLE_CLOUD_PROJECT"):
+        import google.auth
+        try:
+            _, project_id = google.auth.default()
+            if project_id:
+                os.environ["GOOGLE_CLOUD_PROJECT"] = project_id
+        except Exception:
+            pass
+
+    # Resolve location overrides from runtime ID
+    runtime_id = os.environ.get("AGENT_RUNTIME_ID")
+    if runtime_id:
+        parts = runtime_id.split("/")
+        if len(parts) > 3 and parts[2] == "locations":
+            os.environ["GOOGLE_CLOUD_LOCATION"] = parts[3]
+
+    if not os.environ.get("GOOGLE_CLOUD_LOCATION"):
+        os.environ["GOOGLE_CLOUD_LOCATION"] = "global"
+
+    if not os.environ.get("GOOGLE_GENAI_USE_VERTEXAI"):
+        os.environ["GOOGLE_GENAI_USE_VERTEXAI"] = "True"
+
+    return Settings()
 
 
 def get_settings(force_reload: bool = False) -> Settings:
-    """Retrieves or initializes the centralized configuration settings."""
-    global _settings
-    if _settings is None or force_reload:
-        # Set up default credentials & project if not already in env
-        if not os.environ.get("GEMINI_API_KEY") and not os.environ.get("GOOGLE_CLOUD_PROJECT"):
-            import google.auth
-            try:
-                _, project_id = google.auth.default()
-                if project_id:
-                    os.environ["GOOGLE_CLOUD_PROJECT"] = project_id
-            except Exception:
-                pass
-
-        # Resolve location overrides from runtime ID
-        runtime_id = os.environ.get("AGENT_RUNTIME_ID")
-        if runtime_id:
-            parts = runtime_id.split("/")
-            if len(parts) > 3 and parts[2] == "locations":
-                os.environ["GOOGLE_CLOUD_LOCATION"] = parts[3]
-
-        if not os.environ.get("GOOGLE_CLOUD_LOCATION"):
-            os.environ["GOOGLE_CLOUD_LOCATION"] = "global"
-
-        if not os.environ.get("GOOGLE_GENAI_USE_VERTEXAI"):
-            os.environ["GOOGLE_GENAI_USE_VERTEXAI"] = "True"
-
-        _settings = Settings()
-    return _settings
+    """Wrapper for backwards compatibility."""
+    return load_settings()
