@@ -15,27 +15,26 @@ import json
 import logging
 import os
 
-import google.auth
 from fastapi import FastAPI, Request
 from google.adk.cli.fast_api import get_fast_api_app
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.app_utils.telemetry import setup_telemetry
 from app.app_utils.typing import Feedback
+from app.core.config import get_settings
+from app.core.adapters.pubsub import normalize_pubsub_payload
 
 # Setup standard Python logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Initialize settings
+settings = get_settings()
+
 setup_telemetry()
-_, project_id = google.auth.default()
 
-allow_origins = (
-    os.getenv("ALLOW_ORIGINS", "").split(",") if os.getenv("ALLOW_ORIGINS") else None
-)
-
-# Artifact bucket for ADK (created by Terraform, passed via env var)
-logs_bucket_name = os.environ.get("LOGS_BUCKET_NAME")
+allow_origins = settings.allow_origins if settings.allow_origins else None
+logs_bucket_name = settings.logs_bucket_name
 
 AGENT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # In-memory session configuration - no persistent storage
@@ -63,32 +62,22 @@ class NormalizePubSubSubscriptionMiddleware(BaseHTTPMiddleware):
         if "/trigger/pubsub" in request.url.path and request.method == "POST":
             try:
                 body = await request.json()
-                if isinstance(body, dict) and "subscription" in body:
-                    sub_path = body["subscription"]
-                    if sub_path and "/" in sub_path:
-                        # Extract short name: e.g. "projects/p/subscriptions/sub" -> "sub"
-                        short_name = sub_path.split("/")[-1]
-                        body["subscription"] = short_name
-                        logger.info(
-                            "Normalized subscription path: %s -> %s",
-                            sub_path,
-                            short_name,
-                        )
-                        # Re-encode body back into request stream
-                        modified_body = json.dumps(body).encode("utf-8")
+                normalized_body = normalize_pubsub_payload(body)
+                if normalized_body is not body:
+                    modified_body = json.dumps(normalized_body).encode("utf-8")
 
-                        # Explicitly set Starlette cached body and json
-                        request._body = modified_body
-                        request._json = body
+                    # Explicitly set Starlette cached body and json
+                    request._body = modified_body
+                    request._json = normalized_body
 
-                        async def receive():
-                            return {
-                                "type": "http.request",
-                                "body": modified_body,
-                                "more_body": False,
-                            }
+                    async def receive():
+                        return {
+                            "type": "http.request",
+                            "body": modified_body,
+                            "more_body": False,
+                        }
 
-                        request._receive = receive
+                    request._receive = receive
             except Exception as e:
                 logger.warning("Failed to normalize subscription body: %s", e)
 

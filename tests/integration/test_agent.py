@@ -20,7 +20,7 @@ from google.genai import types
 from app.agent import root_agent
 
 
-def test_agent_stream() -> None:
+def test_agent_stream(mock_vertex_search) -> None:
     """
     Integration test for the agent stream functionality.
     Tests that the agent returns valid streaming responses.

@@ -16,7 +16,6 @@ import os
 from typing import Any
 
 import vertexai
-from dotenv import load_dotenv
 from google.adk.artifacts import GcsArtifactService, InMemoryArtifactService
 from google.cloud import logging as google_cloud_logging
 from vertexai.agent_engines.templates.adk import AdkApp
@@ -24,9 +23,10 @@ from vertexai.agent_engines.templates.adk import AdkApp
 from app.agent import app as adk_app
 from app.app_utils.telemetry import setup_telemetry
 from app.app_utils.typing import Feedback
+from app.core.config import get_settings
 
-# Load environment variables from .env file at runtime
-load_dotenv()
+# Initialize settings
+settings = get_settings()
 
 
 class AgentEngineApp(AdkApp):
@@ -57,8 +57,8 @@ class AgentEngineApp(AdkApp):
         return self
 
 
-gemini_location = os.environ.get("GOOGLE_CLOUD_LOCATION")
-logs_bucket_name = os.environ.get("LOGS_BUCKET_NAME")
+gemini_location = settings.resolved_location
+logs_bucket_name = settings.logs_bucket_name
 agent_runtime = AgentEngineApp(
     app=adk_app,
     artifact_service_builder=lambda: (

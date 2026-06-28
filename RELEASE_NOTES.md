@@ -1,3 +1,16 @@
+# Release Notes - LUX Agent v1.2.0
+
+## Features & Improvements
+
+### Architectural Refactoring & Decompounding
+* **Centralized Configuration**: Introduced `app/core/config.py` with an on-demand `Settings` model, eliminating import-time environment variable branching. Exposes dynamic properties for location routing and MCP detection.
+* **Isolated Persistence Adapter**: Decoupled database state operations. Replaced direct file reads/writes with the `AuditRepository` abstraction inside `app/core/persistence.py`.
+* **Monolithic Cleanliness**: Decomposed `agent.py` into isolated modules for validation (`app/core/validation.py`), security/redaction (`app/core/security.py`), and tools (`app/tools/amazon_brands.py`, `app/tools/dma_rag.py`).
+* **Harden HTTP Boundaries**: Migrated Starlette request stream body rewrite mutations into a dedicated Pub/Sub payload adapter (`app/core/adapters/pubsub.py`).
+* **Tightened Test Architecture**: Disabled global `autouse=True` mock side-effects in `tests/conftest.py`. Added unit tests for config, persistence, and pubsub adapter boundaries.
+
+---
+
 # Release Notes - LUX Agent v1.1.0
 
 ## Features & Improvements

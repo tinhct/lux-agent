@@ -19,7 +19,6 @@ import os
 import re
 from typing import Any
 from zoneinfo import ZoneInfo
-from dotenv import load_dotenv
 
 class RateLimitException(Exception):
     pass
@@ -45,437 +44,23 @@ from mcp import StdioServerParameters
 from google.genai import types
 from pydantic import BaseModel, Field
 
-# Load local environment configuration from .env
-load_dotenv()
+from app.core.config import get_settings
+# Initialize configuration settings
+settings = get_settings()
+from app.core.persistence import get_audit_repository
 
-# Setup defaults if not explicitly set in the environment
-if not os.environ.get("GEMINI_API_KEY"):
-    import google.auth
-
-    try:
-        _, project_id = google.auth.default()
-        if project_id:
-            os.environ.setdefault("GOOGLE_CLOUD_PROJECT", project_id)
-    except Exception:
-        pass
-    os.environ.setdefault("GOOGLE_CLOUD_LOCATION", "global")
-    os.environ.setdefault("GOOGLE_GENAI_USE_VERTEXAI", "True")
-
-
-def validate_keyword(keyword: Any) -> str:
-    """Validates and sanitizes a keyword input for fetch_amazon_brands.
-    Raises ValueError with a clear user-facing explanation if validation fails.
-    Returns the cleaned (trimmed and normalized) keyword string.
-    """
-    import re
-
-    if not isinstance(keyword, str):
-        raise ValueError("Keyword must be a string.")
-
-    # Whitespace Trimming & Normalization
-    cleaned = keyword.strip()
-    cleaned = re.sub(r"\s+", " ", cleaned)
-
-    if not cleaned:
-        raise ValueError("Keyword cannot be empty.")
-
-    # Length Boundaries
-    if len(cleaned) < 2:
-        raise ValueError("Keyword is too short (minimum length is 2 characters).")
-    if len(cleaned) > 50:
-        raise ValueError("Keyword is too long (maximum length is 50 characters).")
-
-    # Security: Illegal Character Rejection
-    illegal_chars = ["<", ">", "{", "}", "[", "]", "\\", "/", ";", "=", "*"]
-    for char in illegal_chars:
-        if char in cleaned:
-            raise ValueError(f"Keyword contains illegal character: '{char}'")
-
-    # Security: Anti-Prompt Injection Signatures
-    injection_patterns = ["ignore", "instructions", "system prompt", "bypass", "print"]
-    cleaned_lower = cleaned.lower()
-    for pattern in injection_patterns:
-        if pattern in cleaned_lower:
-            raise ValueError(f"Keyword contains blocked word signature: '{pattern}'")
-
-    # Domain: ASIN Rejection (10-character alphanumeric starting with B0)
-    if re.match(r"(?i)^B0[A-Z0-9]{8}$", cleaned):
-        raise ValueError("ASINs (Amazon Standard Identification Numbers) are not allowed as search keywords.")
-
-    # Domain: URL Rejection (containing http, www, or .com)
-    url_patterns = ["http", "www", ".com"]
-    for pattern in url_patterns:
-        if pattern in cleaned_lower:
-            raise ValueError("URLs/links are not allowed as search keywords.")
-
-    # Ethical: PII Block (email, phone, SSN)
-    email_regex = r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}"
-    phone_regex = r"\+?\d[\d\-\s\(\)]{8,}\d"
-    ssn_regex = r"\d{3}-\d{2}-\d{4}"
-
-    if re.search(email_regex, cleaned):
-        raise ValueError("Input contains a pattern formatted like an email address (blocked for PII protection).")
-    if re.search(ssn_regex, cleaned):
-        raise ValueError("Input contains a pattern formatted like a Social Security Number (blocked for PII protection).")
-    if re.search(phone_regex, cleaned):
-        raise ValueError("Input contains a pattern formatted like a phone number (blocked for PII protection).")
-
-    # Ethical: NSFW / Harmful Content Filter (Basic blocklist)
-    harmful_terms = [
-        "porn", "nsfw", "xxx", "sex", "drugs", "weapons", "bomb", "kill", "suicide", "gamble"
-    ]
-    for term in harmful_terms:
-        if term in cleaned_lower:
-            raise ValueError(f"Keyword contains restricted term: '{term}'")
-
-    # Security: Character Allowlist (catch-all at the end)
-    if not re.match(r"^[\w\s\-\']+$", cleaned):
-        raise ValueError("Keyword contains invalid characters. Only alphanumeric, spaces, hyphens, and apostrophes are allowed.")
-
-    return cleaned
-
-
-def fetch_amazon_brands(keyword: str) -> dict[str, Any]:
-    """Queries Amazon's undocumented search suggestion API to extract structured data on private-label brands.
-
-    Args:
-        keyword: The search keyword (e.g. 'batteries', 'spicy') to query.
-
-    Returns:
-        A dictionary containing the search keyword and brand classification results matching amazon_api_schema.md.
-    """
-    import datetime
-    import time
-    import random
-    import re
-    import requests
-
-    timestamp_utc = datetime.datetime.now(datetime.timezone.utc).isoformat()
-
-    try:
-        cleaned_keyword = validate_keyword(keyword)
-    except ValueError as e:
-        return {
-            "audit_metadata": {
-                "keyword": keyword,
-                "timestamp_utc": timestamp_utc,
-                "status_code": 400
-            },
-            "results": [],
-            "error_log": f"Validation failed: {e}"
-        }
-
-    if cleaned_keyword == "mock_payload":
-        return {
-            "audit_metadata": {
-                "keyword": "mock_payload",
-                "timestamp_utc": timestamp_utc,
-                "status_code": 200
-            },
-            "results": [
-                {"rank": 1, "value": "amazon basics batteries", "brand_type": "house_brand"},
-                {"rank": 2, "value": "energizer aa batteries", "brand_type": "third_party"},
-            ],
-            "error_log": None
-        }
-
-    url = "https://completion.amazon.com/api/2017/suggestions"
-    params = {
-        "mid": "ATVPDKIKX0DER",
-        "alias": "aps",
-        "prefix": cleaned_keyword,
-        "suggestion-type": "keyword",
-    }
-
-    # Default headers
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    }
-
-    attempted_clean_retry = False
-    max_429_attempts = 3
-    attempt_429 = 0
-    status_code = 200
-    error_log = None
-    data = None
-
-    while True:
-        try:
-            response = requests.get(url, params=params, headers=headers, timeout=10)
-            status_code = response.status_code
-
-            if status_code == 429:
-                attempt_429 += 1
-                if attempt_429 <= max_429_attempts:
-                    base_sleep = 2.0 * (2 ** (attempt_429 - 1))
-                    jitter = random.uniform(0, 0.5)
-                    time.sleep(base_sleep + jitter)
-                    continue
-                else:
-                    raise RateLimitException(
-                        "Audit paused due to strict API rate limiting. Manual IP rotation or cooling period required."
-                    )
-
-            if status_code in (401, 403):
-                if not attempted_clean_retry:
-                    headers = {
-                        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-                    }
-                    attempted_clean_retry = True
-                    continue
-                else:
-                    raise APIAuthenticationError(
-                        "API authentication rejected. The undocumented suggestion endpoint may have updated its security posture."
-                    )
-
-            if status_code in (502, 503, 504):
-                time.sleep(5.0)
-                response = requests.get(url, params=params, headers=headers, timeout=10)
-                status_code = response.status_code
-                if status_code in (502, 503, 504):
-                    raise TransientServerError(
-                        "Transient server error: Amazon load balancer or server is down."
-                    )
-
-            response.raise_for_status()
-            data = response.json()
-            break
-
-        except requests.exceptions.RequestException as e:
-            if e.response is not None:
-                status_code = e.response.status_code
-                if status_code == 429:
-                    attempt_429 += 1
-                    if attempt_429 <= max_429_attempts:
-                        base_sleep = 2.0 * (2 ** (attempt_429 - 1))
-                        jitter = random.uniform(0, 0.5)
-                        time.sleep(base_sleep + jitter)
-                        continue
-                    else:
-                        error_log = "RateLimitException: Audit paused due to strict API rate limiting. Manual IP rotation or cooling period required."
-                        break
-                elif status_code in (401, 403):
-                    if not attempted_clean_retry:
-                        headers = {
-                            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-                        }
-                        attempted_clean_retry = True
-                        continue
-                    else:
-                        error_log = "APIAuthenticationError: API authentication rejected. The undocumented suggestion endpoint may have updated its security posture."
-                        break
-                elif status_code in (502, 503, 504):
-                    time.sleep(5.0)
-                    try:
-                        response = requests.get(url, params=params, headers=headers, timeout=10)
-                        status_code = response.status_code
-                        response.raise_for_status()
-                        data = response.json()
-                        break
-                    except Exception as e_retry:
-                        error_log = f"TransientServerError: Transient server error: Amazon load balancer or server is down: {e_retry}"
-                        break
-            error_log = f"NetworkException: Failed to fetch suggestions from Amazon API: {e}"
-            break
-        except (RateLimitException, APIAuthenticationError, TransientServerError) as e:
-            error_log = f"{e.__class__.__name__}: {e}"
-            break
-        except Exception as e:
-            error_log = f"Exception: Failed to fetch suggestions: {e}"
-            break
-
-    if error_log:
-        return {
-            "audit_metadata": {
-                "keyword": cleaned_keyword,
-                "timestamp_utc": timestamp_utc,
-                "status_code": status_code
-            },
-            "results": [],
-            "error_log": error_log
-        }
-
-    raw_suggestions = data.get("suggestions", [])
-    
-    # 2. Soft Fails
-    common_keywords = {"batteries", "basics", "amazon", "kindle", "spicy"}
-    if not raw_suggestions and cleaned_keyword.lower() in common_keywords:
-        error_log = "AnomalyWarning: Common keyword returned empty suggestions. Shadow-ban or malformed parameters suspected."
-    
-    elif raw_suggestions:
-        keyword_words = set(re.findall(r"\w+", cleaned_keyword.lower()))
-        has_overlap = False
-        for item in raw_suggestions:
-            val = item.get("value", "").lower()
-            val_words = set(re.findall(r"\w+", val))
-            if keyword_words.intersection(val_words):
-                has_overlap = True
-                break
-        
-        if not has_overlap:
-            error_log = "Data extraction failed: API returned generic category fallbacks rather than keyword-specific recommendations."
-            raw_suggestions = []
-
-    results = []
-    if not error_log or "AnomalyWarning" in error_log:
-        for index, item in enumerate(raw_suggestions):
-            value = item.get("value", "")
-            if (
-                "amazon" in value.lower()
-                or "basics" in value.lower()
-                or "solimo" in value.lower()
-                or "presto" in value.lower()
-            ):
-                brand_type = "house_brand"
-            else:
-                brand_type = "third_party"
-            
-            results.append({
-                "rank": index + 1,
-                "value": value,
-                "brand_type": brand_type
-            })
-
-    return {
-        "audit_metadata": {
-            "keyword": cleaned_keyword,
-            "timestamp_utc": timestamp_utc,
-            "status_code": status_code
-        },
-        "results": results,
-        "error_log": error_log
-    }
-
-
-def query_dma_rag(query: str) -> dict[str, Any]:
-    """Searches indexed Digital Markets Act (DMA) documents via a simulated vector search endpoint.
-
-    Args:
-        query: The semantic search query or regulatory concept (e.g. 'self-preferencing', 'Article 6(5)') to look up.
-
-    Returns:
-        A dictionary containing the list of matching document chunks, including sources and relevance.
-    """
-    import os
-    
-    project_id = os.environ.get("VERTEX_AI_SEARCH_PROJECT_ID")
-    location = os.environ.get("VERTEX_AI_SEARCH_LOCATION", "global")
-    data_store_id = os.environ.get("VERTEX_AI_SEARCH_DATA_STORE_ID")
-    
-    def get_simulated_chunks(q: str):
-        q_lower = q.lower()
-        chunks = []
-        if "prefer" in q_lower or "rank" in q_lower:
-            chunks.append({
-                "content": "Under the DMA, self-preferencing occurs when a gatekeeper treats its own services or products more favorably in ranking and related indexing and crawling than similar third-party services.",
-                "source": "Digital Markets Act, Article 6, Paragraph 5",
-                "relevance": 0.95
-            })
-        if "search" in q_lower or "core platform" in q_lower:
-            chunks.append({
-                "content": "Online search engines are defined as 'core platform services' subject to gatekeeper obligations if they meet the quantitative thresholds.",
-                "source": "Digital Markets Act, Article 2, Paragraph 2(b)",
-                "relevance": 0.90
-            })
-        if "gdpr" in q_lower or "article 5" in q_lower or "prejudice" in q_lower:
-            chunks.append({
-                "content": "This is without prejudice to obligations under Regulation (EU) 2016/679 (GDPR). Under DMA Article 5(2), gatekeepers face specific restrictions, though the text notes this is without prejudice to the GDPR.",
-                "source": "Digital Markets Act, Article 5, Paragraph 2",
-                "relevance": 0.88
-            })
-        if "gatekeeper" in q_lower or "threshold" in q_lower:
-            chunks.append({
-                "content": "A provider of core platform services shall be designated as a gatekeeper if it has a significant impact on the internal market, operates a core platform service which serves as an important gateway for business users to reach end users, and enjoys an established and durable position.",
-                "source": "Digital Markets Act, Article 3, Paragraph 1",
-                "relevance": 0.85
-            })
-        return chunks
-
-    if not all([project_id, data_store_id]):
-        chunks = get_simulated_chunks(query)
-        if not chunks:
-            return {
-                "status": "no_match",
-                "message": f"No relevant definitions or restrictions matching '{query}' were found in the indexed DMA documentation. The system cannot perform a compliance mapping for this specific query.",
-                "chunks": []
-            }
-        return {
-            "status": "success",
-            "chunks": chunks
-        }
-
-    try:
-        from google.cloud import discoveryengine_v1 as discoveryengine
-        
-        client = discoveryengine.SearchServiceClient()
-        serving_config = (
-            f"projects/{project_id}/locations/{location}"
-            f"/collections/default_collection/dataStores/{data_store_id}"
-            f"/servingConfigs/default_search"
-        )
-
-        extractive_spec = discoveryengine.SearchRequest.ContentSearchSpec.ExtractiveContentSpec(
-            max_extractive_segment_count=3,
-            return_extractive_segment_score=True,
-        )
-
-        request = discoveryengine.SearchRequest(
-            serving_config=serving_config,
-            query=query,
-            content_search_spec=discoveryengine.SearchRequest.ContentSearchSpec(
-                extractive_content_spec=extractive_spec,
-            ),
-        )
-
-        response = client.search(request)
-        chunks = []
-
-        for result in response.results:
-            doc_data = result.document.derived_struct_data
-            segments = doc_data.get("extractive_segments", [])
-            title = doc_data.get("title", "Digital Markets Act")
-            
-            for segment in segments:
-                chunks.append({
-                    "content": segment.get("content", ""),
-                    "source": f"{title}, Segment {segment.get('pageNumber', 'N/A')}",
-                    "relevance": segment.get("relevanceScore", 0.0),
-                })
-
-        if not chunks:
-            return {
-                "status": "no_match",
-                "message": f"No relevant definitions or restrictions matching '{query}' were found in the indexed DMA documentation.",
-                "chunks": []
-            }
-
-        chunks.sort(key=lambda x: x["relevance"], reverse=True)
-        return {
-            "status": "success",
-            "chunks": chunks[:5]
-        }
-
-    except Exception as e:
-        simulated_chunks = get_simulated_chunks(query)
-        if simulated_chunks:
-            return {
-                "status": "success",
-                "warning": f"Vertex AI Search failed ({e}). Fell back to simulated local database.",
-                "chunks": simulated_chunks
-            }
-        return {
-            "status": "error",
-            "message": f"Vertex AI Search failed and no local fallback matches were found: {str(e)}",
-            "chunks": []
-        }
+from app.core.validation import validate_keyword
+from app.tools.amazon_brands import (
+    fetch_amazon_brands,
+    RateLimitException,
+    APIAuthenticationError,
+    TransientServerError,
+)
+from app.tools.dma_rag import query_dma_rag
 
 
 # Determine tools to use based on environment (local with MCP vs. cloud Agent Runtime)
-import shutil
-mcp_server_dir = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "mcp_server")
-)
-if os.path.exists(mcp_server_dir) and shutil.which("uv") is not None and not os.environ.get("AGENT_RUNTIME_ID"):
+if settings.use_mcp:
     mcp_toolset = McpToolset(
         connection_params=StdioConnectionParams(
             server_params=StdioServerParameters(
@@ -571,20 +156,7 @@ api_inspector_node = LlmAgent(
 )
 
 
-def sanitize_text(val: Any) -> Any:
-    """Helper to clean HTML tags and potential code signatures recursively."""
-    if isinstance(val, str):
-        # Strip HTML tags
-        sanitized = re.sub(r"<[^>]*>", "", val)
-        # Strip common script/code signatures to block prompt injection
-        sanitized = re.sub(r"(?i)javascript:|script:|eval\(|exec\(", "", sanitized)
-        # Limit individual string length
-        return sanitized[:500]
-    elif isinstance(val, dict):
-        return {k: sanitize_text(v) for k, v in val.items()}
-    elif isinstance(val, list):
-        return [sanitize_text(item) for item in val]
-    return val
+from app.core.security import sanitize_text
 
 
 @node
@@ -654,61 +226,7 @@ regulatory_analyst_node = LlmAgent(
 )
 
 
-def scrub_and_detect(val: Any, redacted_categories: set[str]) -> tuple[Any, bool]:
-    """Helper to scrub sensitive PII and identify prompt injection attacks."""
-    is_injection = False
-    if isinstance(val, str):
-        # 1. Scrub SSNs: XXX-XX-XXXX
-        ssn_pattern = r"\b\d{3}-\d{2}-\d{4}\b"
-        if re.search(ssn_pattern, val):
-            redacted_categories.add("SSN")
-            val = re.sub(ssn_pattern, "[REDACTED_SSN]", val)
-
-        # 2. Scrub Credit Cards: 13-16 digits with optional dashes/spaces
-        cc_pattern = r"\b(?:\d[ -]*?){13,16}\b"
-        if re.search(cc_pattern, val):
-            redacted_categories.add("Credit Card")
-            val = re.sub(cc_pattern, "[REDACTED_CC]", val)
-
-        # 3. Detect Prompt Injection Attempts
-        injection_keywords = [
-            "ignore previous",
-            "ignore instructions",
-            "system prompt",
-            "developer mode",
-            "override rules",
-            "bypass rules",
-            "auto-approve",
-            "force approve",
-            "always approve",
-            "ignore compliance",
-            "bypass compliance",
-        ]
-        val_lower = val.lower()
-        if any(keyword in val_lower for keyword in injection_keywords):
-            is_injection = True
-
-        return val, is_injection
-
-    elif isinstance(val, dict):
-        new_dict = {}
-        for k, v in val.items():
-            scrubbed_v, inj = scrub_and_detect(v, redacted_categories)
-            if inj:
-                is_injection = True
-            new_dict[k] = scrubbed_v
-        return new_dict, is_injection
-
-    elif isinstance(val, list):
-        new_list = []
-        for item in val:
-            scrubbed_item, inj = scrub_and_detect(item, redacted_categories)
-            if inj:
-                is_injection = True
-            new_list.append(scrubbed_item)
-        return new_list, is_injection
-
-    return val, is_injection
+from app.core.security import scrub_and_detect
 
 
 @node
@@ -853,21 +371,12 @@ def finalize_report_node(ctx: Context, node_input: dict):
     notes = node_input["notes"]
     report = node_input["report"]
 
-    db_path = "audit_db.json"
-
-    # Read existing database or create new
-    if os.path.exists(db_path):
-        try:
-            with open(db_path, "r") as f:
-                db = json.load(f)
-        except Exception:
-            db = []
-    else:
-        db = []
+    repo = get_audit_repository()
+    next_id = repo.get_next_id()
 
     # Prepare audit record
     audit_record = {
-        "id": len(db) + 1,
+        "id": next_id,
         "timestamp": datetime.datetime.now(ZoneInfo("UTC")).isoformat(),
         "decision": decision,
         "notes": notes,
@@ -878,14 +387,7 @@ def finalize_report_node(ctx: Context, node_input: dict):
 
     # If approved, save to the database
     if decision.lower() in ("approve", "approved", "yes"):
-        db.append(audit_record)
-        try:
-            with open(db_path, "w") as f:
-                json.dump(db, f, indent=2)
-            db_status = "Saved to Database successfully."
-        except Exception as e:
-            db_status = f"Failed to save to database: {e}"
-
+        db_status = repo.append_record(audit_record)
         status_text = "Approved"
     else:
         db_status = "Rejection logged. Report was not saved to the active database."

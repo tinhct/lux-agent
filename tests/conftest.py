@@ -15,7 +15,7 @@
 from unittest.mock import MagicMock, patch
 import pytest
 
-@pytest.fixture(autouse=True)
+@pytest.fixture
 def mock_vertex_search():
     """Automatically mock Discovery Engine search client calls during test execution."""
     with patch("google.cloud.discoveryengine_v1.SearchServiceClient") as mock_client_cls:
